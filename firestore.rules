@@ -60,5 +60,15 @@ service cloud.firestore {
                     (resource == null || resource.data.uid == request.auth.uid || isAdmin());
       allow write: if false;
     }
+
+    // Each employee's running to-do list — one doc per user, not tied
+    // to a date, since unfinished items should carry over day to day.
+    // Only the owner ever reads or writes it (not admins — it's a
+    // personal working list; completed items get logged into that
+    // day's `entries` doc instead, where the existing rules already
+    // cover admin visibility).
+    match /todos/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
   }
 }
