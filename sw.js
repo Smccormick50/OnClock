@@ -4,7 +4,7 @@
 // other cross-origin request — those are left completely alone and
 // always go straight to the network.
 
-const CACHE_NAME = "onclock-shell-v2";
+const CACHE_NAME = "onclock-shell-v3";
 const CORE_ASSETS = [
   "index.html",
   "admin.html",

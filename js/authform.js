@@ -5,8 +5,8 @@
   function setMode(newMode) {
     mode = newMode;
     document.getElementById("nameField").style.display = mode === "signup" ? "block" : "none";
-    document.getElementById("authTitle").textContent = mode === "signup" ? "Create account" : "Sign in";
-    document.getElementById("authSubmitBtn").textContent = mode === "signup" ? "Create account" : "Sign in";
+    document.getElementById("authSubtitle").textContent = mode === "signup" ? "Create your account." : "Sign in with your email and password.";
+    document.getElementById("authSubmitBtn").textContent = mode === "signup" ? "Create Account" : "Sign In";
     document.getElementById("toggleModeBtn").textContent = mode === "signup" ? "Already have an account? Sign in" : "Need an account? Sign up";
     document.getElementById("authError").textContent = "";
     document.getElementById("authInfo").textContent = "";
