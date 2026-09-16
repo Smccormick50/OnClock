@@ -56,6 +56,15 @@
     items.splice(idx, 1);
     saveTodos(items);
   }
+  function doEditTodo(idx, newText) {
+    newText = newText.trim();
+    if (!newText) return;
+    var items = clone(todoItems);
+    var item = items[idx];
+    if (!item) return;
+    item.text = newText;
+    saveTodos(items);
+  }
   function doCompleteTodo(idx) {
     var items = clone(todoItems);
     var item = items[idx];
@@ -95,6 +104,37 @@
       textSpan.className = "todo-text";
       textSpan.textContent = item.text;
 
+      var editLink = document.createElement("button");
+      editLink.className = "edit-link";
+      editLink.textContent = "edit";
+      editLink.onclick = function () {
+        var input = document.createElement("input");
+        input.type = "text";
+        input.value = item.text;
+        input.style.flex = "1";
+        input.style.minWidth = "140px";
+        input.style.fontFamily = "'Source Sans 3', sans-serif";
+        input.style.fontSize = "16px";
+        input.style.padding = "3px 6px";
+        input.style.border = "1px solid var(--line)";
+        input.style.borderRadius = "4px";
+        input.style.background = "var(--paper)";
+        input.style.color = "var(--ink)";
+        var saveBtn = document.createElement("button");
+        saveBtn.textContent = "Save";
+        saveBtn.onclick = function () { doEditTodo(idx, input.value); };
+        input.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") saveBtn.click();
+        });
+        var box = document.createElement("div");
+        box.className = "edit-inline";
+        box.style.flex = "1";
+        box.appendChild(input);
+        box.appendChild(saveBtn);
+        li.replaceChild(box, textSpan);
+        editLink.disabled = true;
+      };
+
       var del = document.createElement("button");
       del.className = "del";
       del.title = "Remove without completing";
@@ -103,6 +143,7 @@
 
       li.appendChild(checkbox);
       li.appendChild(textSpan);
+      li.appendChild(editLink);
       li.appendChild(del);
       listEl.appendChild(li);
     });
