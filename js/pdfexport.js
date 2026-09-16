@@ -192,6 +192,24 @@ function exportDayPdf(personName, dateStr, data) {
     });
   }
 
+  if (data.completedTodos && data.completedTodos.length > 0) {
+    y += 22;
+    sectionLabel("Completed To-Dos");
+    tableHeader([
+      { label: "TIME", x: 10 },
+      { label: "TASK", x: 130 }
+    ]);
+    var sortedTodos = data.completedTodos.slice().sort(function (a, b) { return new Date(a.completedAt) - new Date(b.completedAt); });
+    sortedTodos.forEach(function (ct) {
+      var wrapped = doc.splitTextToSize(ct.text, contentW - 140);
+      var rowH = Math.max(20, wrapped.length * 13 + 7);
+      tableRow([
+        { text: fmtTime(ct.completedAt), x: 10 },
+        { text: wrapped, x: 130 }
+      ], rowH);
+    });
+  }
+
   // Totals bar
   y += 16;
   ensureRoom(30);
