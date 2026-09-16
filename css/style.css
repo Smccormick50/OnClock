@@ -176,8 +176,13 @@ header.top .links a, header.top .links button {
 .log-body.session-in { color: var(--brass); font-weight: 600; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; }
 .log-body.session-out { color: var(--punch-red); font-weight: 600; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; }
 .log-body.session-out .dur { color: var(--ink-soft); font-family: 'Space Mono', monospace; font-weight: 400; font-size: 13px; margin-left: 8px; }
+.log-body.todo-done { color: var(--brass); font-weight: 600; }
 .log-row .del { background: none; border: none; color: var(--ink-soft); cursor: pointer; font-size: 16px; padding: 0 2px; line-height: 1; }
 .log-row .del:hover { color: var(--punch-red); }
+
+.todo-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+.todo-row input[type="checkbox"] { width: 19px; height: 19px; accent-color: var(--pine); cursor: pointer; flex-shrink: 0; }
+.todo-row .todo-text { flex: 1; font-size: 15px; }
 .log-empty { padding: 16px 0; color: var(--ink-soft); font-size: 14px; font-style: italic; }
 
 .edit-inline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
@@ -304,6 +309,16 @@ header.top .links a, header.top .links button {
   color: var(--ink);
   font-family: 'Space Mono', monospace;
   font-size: 16px; /* iOS: under 16px triggers auto-zoom on focus */
+}
+.date-picker-row select {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 16px; /* iOS: under 16px triggers auto-zoom on focus */
+  max-width: 200px;
 }
 .detail-panel { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .detail-panel.open { display: block; }
