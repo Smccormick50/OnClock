@@ -60,7 +60,7 @@ function renderArchiveGroups(containerEl, docs, showName) {
       viewBtn.style.fontSize = "13px";
       viewBtn.textContent = "View PDF";
       viewBtn.onclick = function () {
-        exportDayPdf(e.name, e.date, { sessions: e.sessions || [], notes: e.notes || [] });
+        exportDayPdf(e.name, e.date, { sessions: e.sessions || [], notes: e.notes || [], completedTodos: e.completedTodos || [] });
       };
       var csvBtn = document.createElement("button");
       csvBtn.className = "btn secondary";
@@ -68,7 +68,7 @@ function renderArchiveGroups(containerEl, docs, showName) {
       csvBtn.style.fontSize = "13px";
       csvBtn.textContent = "CSV";
       csvBtn.onclick = function () {
-        exportDayCsv(e.name, e.date, { sessions: e.sessions || [], notes: e.notes || [] });
+        exportDayCsv(e.name, e.date, { sessions: e.sessions || [], notes: e.notes || [], completedTodos: e.completedTodos || [] });
       };
 
       right.appendChild(total);
