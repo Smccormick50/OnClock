@@ -5,10 +5,12 @@
   var currentProfile = null;
   var todayStr = localDateStr(new Date());
   var viewedDate = todayStr;
-  var docCache = {}; // dateStr -> {sessions, notes}
+  var docCache = {}; // dateStr -> {sessions, notes, completedTodos}
   var unsubViewed = null;
   var unsubHistory = null;
   var unsubArchives = null;
+  var unsubTodos = null;
+  var todoItems = []; // the running, not-date-scoped to-do list
 
   function entryRef(dateStr) {
     return db.collection("entries").doc(entryId(currentUser.uid, dateStr));
@@ -24,7 +26,85 @@
       name: currentProfile.name,
       date: dateStr,
       sessions: data.sessions,
-      notes: data.notes
+      notes: data.notes,
+      completedTodos: data.completedTodos || []
+    });
+  }
+
+  // ---------- to-do list (separate doc, not tied to a date) ----------
+  function todosRef() {
+    return db.collection("todos").doc(currentUser.uid);
+  }
+  function subscribeTodos() {
+    unsubTodos = todosRef().onSnapshot(function (snap) {
+      todoItems = (snap.exists && snap.data().items) || [];
+      renderTodos();
+    }, function (err) { console.error("todos snapshot error", err); });
+  }
+  function saveTodos(items) {
+    return todosRef().set({ items: items });
+  }
+  function doAddTodo(text) {
+    text = text.trim();
+    if (!text) return;
+    var items = clone(todoItems);
+    items.push({ text: text, createdAt: new Date().toISOString() });
+    saveTodos(items);
+  }
+  function doDeleteTodo(idx) {
+    var items = clone(todoItems);
+    items.splice(idx, 1);
+    saveTodos(items);
+  }
+  function doCompleteTodo(idx) {
+    var items = clone(todoItems);
+    var item = items[idx];
+    if (!item) return;
+    items.splice(idx, 1);
+    saveTodos(items);
+
+    // Log the completion, timestamped, into today's log.
+    var data = clone(getDayData(todayStr));
+    data.completedTodos = data.completedTodos || [];
+    data.completedTodos.push({ text: item.text, completedAt: new Date().toISOString() });
+    saveDay(todayStr, data);
+  }
+  function doDeleteCompletedTodo(dateStr, idx) {
+    var data = clone(getDayData(dateStr));
+    (data.completedTodos || []).splice(idx, 1);
+    saveDay(dateStr, data);
+  }
+
+  function renderTodos() {
+    var listEl = document.getElementById("todoList");
+    listEl.innerHTML = "";
+    if (todoItems.length === 0) {
+      listEl.innerHTML = '<li class="log-empty">Nothing on your list.</li>';
+      return;
+    }
+    todoItems.forEach(function (item, idx) {
+      var li = document.createElement("li");
+      li.className = "todo-row";
+
+      var checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = false;
+      checkbox.onchange = function () { doCompleteTodo(idx); };
+
+      var textSpan = document.createElement("span");
+      textSpan.className = "todo-text";
+      textSpan.textContent = item.text;
+
+      var del = document.createElement("button");
+      del.className = "del";
+      del.title = "Remove without completing";
+      del.textContent = "\u2715";
+      del.onclick = function () { doDeleteTodo(idx); };
+
+      li.appendChild(checkbox);
+      li.appendChild(textSpan);
+      li.appendChild(del);
+      listEl.appendChild(li);
     });
   }
 
@@ -54,6 +134,15 @@
   function doDeleteNote(dateStr, idx) {
     var data = clone(getDayData(dateStr));
     data.notes.splice(idx, 1);
+    saveDay(dateStr, data);
+  }
+  function doEditNote(dateStr, idx, newText) {
+    newText = newText.trim();
+    if (!newText) return;
+    var data = clone(getDayData(dateStr));
+    var note = data.notes[idx];
+    if (!note) return;
+    note.text = newText;
     saveDay(dateStr, data);
   }
   function doDeleteSession(dateStr, idx) {
@@ -120,6 +209,9 @@
     (data.notes || []).forEach(function (n, idx) {
       rows.push({ t: n.time, type: "note", idx: idx, text: n.text });
     });
+    (data.completedTodos || []).forEach(function (ct, idx) {
+      rows.push({ t: ct.completedAt, type: "todo", idx: idx, text: ct.text });
+    });
     rows.sort(function (a, b) { return new Date(a.t) - new Date(b.t); });
 
     var list = document.getElementById("logList");
@@ -153,15 +245,20 @@
           bodyDiv.appendChild(dur);
           li.appendChild(bodyDiv);
           li.appendChild(makeSessionEditControls(viewedDate, r.idx, "clockOut"));
+        } else if (r.type === "todo") {
+          bodyDiv.classList.add("todo-done");
+          bodyDiv.textContent = "\u2713 " + r.text;
+          li.appendChild(bodyDiv);
+          var delTodo = document.createElement("button");
+          delTodo.className = "del";
+          delTodo.title = "Remove this from the log";
+          delTodo.textContent = "\u2715";
+          delTodo.onclick = function () { doDeleteCompletedTodo(viewedDate, r.idx); };
+          li.appendChild(delTodo);
         } else {
           bodyDiv.textContent = r.text;
           li.appendChild(bodyDiv);
-          var del = document.createElement("button");
-          del.className = "del";
-          del.title = "Delete note";
-          del.textContent = "\u2715";
-          del.onclick = function () { doDeleteNote(viewedDate, r.idx); };
-          li.appendChild(del);
+          li.appendChild(makeNoteEditControls(viewedDate, r.idx, r.text));
         }
         list.appendChild(li);
       });
@@ -196,6 +293,55 @@
       var row = wrap.parentElement;
       var box = document.createElement("div");
       box.className = "edit-inline";
+      box.appendChild(input);
+      box.appendChild(saveBtn);
+      row.appendChild(box);
+      editLink.disabled = true;
+    };
+
+    wrap.appendChild(editLink);
+    wrap.appendChild(delBtn);
+    return wrap;
+  }
+
+  function makeNoteEditControls(dateStr, idx, currentText) {
+    var wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "2px";
+
+    var editLink = document.createElement("button");
+    editLink.className = "edit-link";
+    editLink.textContent = "edit";
+    var delBtn = document.createElement("button");
+    delBtn.className = "del";
+    delBtn.title = "Delete this note";
+    delBtn.textContent = "\u2715";
+    delBtn.onclick = function () { doDeleteNote(dateStr, idx); };
+
+    editLink.onclick = function () {
+      var input = document.createElement("input");
+      input.type = "text";
+      input.value = currentText;
+      input.style.flex = "1";
+      input.style.minWidth = "160px";
+      input.style.fontFamily = "'Source Sans 3', sans-serif";
+      input.style.fontSize = "16px";
+      input.style.padding = "3px 6px";
+      input.style.border = "1px solid var(--line)";
+      input.style.borderRadius = "4px";
+      input.style.background = "var(--paper)";
+      input.style.color = "var(--ink)";
+      var saveBtn = document.createElement("button");
+      saveBtn.textContent = "Save";
+      saveBtn.onclick = function () { doEditNote(dateStr, idx, input.value); };
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") saveBtn.click();
+      });
+      var row = wrap.parentElement;
+      var box = document.createElement("div");
+      box.className = "edit-inline";
+      box.style.flex = "1";
       box.appendChild(input);
       box.appendChild(saveBtn);
       row.appendChild(box);
@@ -258,7 +404,7 @@
     if (unsubViewed) { unsubViewed(); unsubViewed = null; }
     unsubViewed = entryRef(dateStr).onSnapshot(function (snap) {
       var data = snap.exists ? snap.data() : emptyDay();
-      docCache[dateStr] = { sessions: data.sessions || [], notes: data.notes || [] };
+      docCache[dateStr] = { sessions: data.sessions || [], notes: data.notes || [], completedTodos: data.completedTodos || [] };
       if (dateStr === viewedDate) renderViewed();
     }, function (err) { console.error("entry snapshot error", err); });
   }
@@ -274,7 +420,7 @@
         var entries = [];
         snap.docs.forEach(function (d) {
           var data = d.data();
-          docCache[data.date] = { sessions: data.sessions || [], notes: data.notes || [] };
+          docCache[data.date] = { sessions: data.sessions || [], notes: data.notes || [], completedTodos: data.completedTodos || [] };
           if (data.date !== todayStr) entries.push({ id: data.date, data: docCache[data.date] });
         });
         renderHistoryList(entries);
@@ -308,6 +454,14 @@
     document.getElementById("noteInput").addEventListener("keydown", function (e) {
       if (e.key === "Enter") document.getElementById("noteAddBtn").click();
     });
+    document.getElementById("todoAddBtn").onclick = function () {
+      var input = document.getElementById("todoInput");
+      doAddTodo(input.value);
+      input.value = "";
+    };
+    document.getElementById("todoInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") document.getElementById("todoAddBtn").click();
+    });
     document.getElementById("exportBtn").onclick = exportPdf;
     document.getElementById("exportCsvBtn").onclick = exportCsv;
     document.getElementById("backToToday").onclick = function () { switchToDate(todayStr); };
@@ -325,6 +479,7 @@
     subscribeToDay(todayStr);
     subscribeHistory();
     subscribeArchives();
+    subscribeTodos();
   }
 
   function showAuth() {
@@ -333,7 +488,9 @@
     if (unsubViewed) { unsubViewed(); unsubViewed = null; }
     if (unsubHistory) { unsubHistory(); unsubHistory = null; }
     if (unsubArchives) { unsubArchives(); unsubArchives = null; }
+    if (unsubTodos) { unsubTodos(); unsubTodos = null; }
     docCache = {};
+    todoItems = [];
     document.getElementById("authScreen").style.display = "block";
     document.getElementById("appScreen").style.display = "none";
   }
