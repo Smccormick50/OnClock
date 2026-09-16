@@ -1,0 +1,16 @@
+{
+  "name": "OnClock — WFH Time & Notes",
+  "short_name": "OnClock",
+  "description": "Clock in and out, log notes on what you worked on, and keep a running daily log.",
+  "start_url": "index.html",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F0ECDE",
+  "theme_color": "#1F3B2E",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

@@ -1,0 +1,64 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // One profile doc per user: name, email, role ("employee" or "admin").
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+
+      // A user can create their own profile (always as "employee" —
+      // the client always sends role: "employee" on signup).
+      allow create: if isSignedIn() && request.auth.uid == userId
+                    && request.resource.data.role == 'employee';
+
+      // A user can update their own profile but not their own role.
+      // Only an admin can change someone's role.
+      allow update: if isAdmin()
+                    || (isSignedIn() && request.auth.uid == userId
+                        && request.resource.data.role == resource.data.role);
+
+      allow delete: if isAdmin();
+    }
+
+    // One doc per employee per day, id = "<uid>_<YYYY-MM-DD>".
+    // Holds that day's clock in/out sessions and notes.
+    match /entries/{entryId} {
+      // `resource == null` covers reading a day that has no doc yet
+      // (e.g. an employee's very first clock-in, or an admin looking
+      // at a date nobody logged anything on) — without this check,
+      // Firestore errors trying to read `resource.data` off a
+      // nonexistent document, which the client sees as a permission
+      // error instead of "not found".
+      allow read: if isSignedIn() &&
+                    (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+
+      allow create: if isSignedIn() &&
+                    (request.resource.data.uid == request.auth.uid || isAdmin());
+
+      allow update, delete: if isSignedIn() &&
+                    (resource.data.uid == request.auth.uid || isAdmin());
+    }
+
+    // One doc per employee per day, id = "<uid>_<YYYY-MM-DD>", written
+    // only by the nightly archive script (scripts/archive-daily.js,
+    // run by GitHub Actions) via the Admin SDK, which authenticates
+    // with a service account and bypasses these rules entirely.
+    // Clients only ever read.
+    match /archives/{archiveId} {
+      allow read: if isSignedIn() &&
+                    (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+  }
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>OnClock — WFH Time & Notes</title>
+
+<!-- PWA / "Add to Home Screen" support -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1F3B2E">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="OnClock">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Space+Mono:wght@400;700&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ===== Auth screen ===== -->
+<div class="wrap" id="authScreen">
+  <header class="top">
+    <h1>OnClock</h1>
+  </header>
+  <div class="auth-card">
+    <h2 id="authTitle">Sign in</h2>
+    <form id="authForm">
+      <div id="nameField" style="display:none;">
+        <label for="nameInput">Your name</label>
+        <input type="text" id="nameInput" placeholder="Jane Smith">
+      </div>
+      <label for="emailInput">Email</label>
+      <input type="email" id="emailInput" required autocomplete="email">
+      <label for="passwordInput">Password</label>
+      <input type="password" id="passwordInput" required autocomplete="current-password" minlength="6">
+      <button type="submit" class="btn" id="authSubmitBtn">Sign in</button>
+      <div class="auth-error" id="authError"></div>
+      <div class="auth-info" id="authInfo"></div>
+    </form>
+    <div class="toggle">
+      <button id="forgotPasswordBtn" type="button">Forgot password?</button>
+    </div>
+    <div class="toggle">
+      <button id="toggleModeBtn" type="button">Need an account? Sign up</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== App screen ===== -->
+<div class="wrap" id="appScreen" style="display:none;">
+  <header class="top">
+    <h1>OnClock</h1>
+    <div class="sub" id="headerDate">—</div>
+    <div class="links">
+      <span id="welcomeName"></span>
+      <a href="admin.html" id="adminLink" style="display:none;">Admin</a>
+      <button id="signOutBtn">Sign out</button>
+    </div>
+  </header>
+
+  <div class="clock-card">
+    <div class="clock-face" id="liveClock">--:--:--</div>
+    <div class="clock-status" id="clockStatus">Loading…</div>
+    <button class="punch-btn in" id="punchBtn">Loading…</button>
+  </div>
+
+  <div id="viewingBanner" style="display:none;" class="panel">
+    <span id="viewingText"></span>
+    <button id="backToToday" class="edit-link" style="margin-left:12px;">Back to today</button>
+  </div>
+
+  <div class="panel" id="addNotePanel">
+    <h2>Add a note</h2>
+    <div class="note-input-row">
+      <input type="text" id="noteInput" placeholder="What are you working on?" maxlength="240">
+      <button id="noteAddBtn">Log</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2><span id="logTitle">Today's log</span><span class="total" id="totalTime">0h 00m</span></h2>
+    <ul class="log-list" id="logList"></ul>
+    <div class="export-row">
+      <button class="btn secondary" id="exportBtn">Download this log as PDF (up to now)</button>
+      <button class="btn secondary" id="exportCsvBtn">Download as CSV</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Past days</h2>
+    <div id="historyList"><div class="log-empty">Loading…</div></div>
+  </div>
+
+  <div class="panel">
+    <h2>My archived logs</h2>
+    <p class="status-note" style="text-align:left; margin-bottom:10px;">A PDF of your day is saved here automatically at 11:59pm, filed by month.</p>
+    <div id="archivesList"><div class="log-empty">Loading…</div></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.14.1/firebase-app-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.14.1/firebase-auth-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.14.1/firebase-firestore-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/timeutils.js"></script>
+<script src="js/pdfexport.js"></script>
+<script src="js/csvexport.js"></script>
+<script src="js/archives.js"></script>
+<script src="js/authform.js"></script>
+<script src="js/employee.js"></script>
+<script src="js/register-sw.js"></script>
+</body>
+</html>
