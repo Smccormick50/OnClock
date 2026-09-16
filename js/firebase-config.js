@@ -7,7 +7,7 @@
 // not by hiding this file.
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBLnu69ZOne7Cy9yXXmVWTk9jKJ31LEHtI",
+  apiKey: "AIzaSyBLnu69Z0ne7Cy9yXXmVWTk9jKJ31LEHtI",
   authDomain: "onclock-78d0f.firebaseapp.com",
   projectId: "onclock-78d0f",
   storageBucket: "onclock-78d0f.firebasestorage.app",
