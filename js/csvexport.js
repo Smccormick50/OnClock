@@ -50,6 +50,9 @@ function exportDayCsv(personName, dateStr, data) {
   (data.notes || []).forEach(function (n) {
     entries.push({ t: n.time, type: "Note", detail: n.text });
   });
+  (data.completedTodos || []).forEach(function (ct) {
+    entries.push({ t: ct.completedAt, type: "Completed to-do", detail: ct.text });
+  });
   entries.sort(function (a, b) { return new Date(a.t) - new Date(b.t); });
   entries.forEach(function (e) {
     rows.push([fmtTime(e.t), e.type, e.detail]);
