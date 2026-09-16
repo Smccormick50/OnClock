@@ -1,0 +1,30 @@
+name: Archive daily logs
+
+on:
+  schedule:
+    # Runs at :55 past every hour, UTC. The script itself checks
+    # whether it's currently 11pm in TIME_ZONE (see archive-daily.js)
+    # and does nothing the other 23 times a day.
+    - cron: "55 * * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Re-archive a specific date (YYYY-MM-DD). Leave blank to archive today right now instead of waiting for 11pm — e.g. use this after an admin corrects a past day's punches, to refresh that day's saved PDF."
+        required: false
+        type: string
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+        working-directory: scripts
+      - run: node archive-daily.js
+        working-directory: scripts
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          ARCHIVE_DATE: ${{ github.event.inputs.date }}
