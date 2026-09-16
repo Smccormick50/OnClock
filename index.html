@@ -24,12 +24,11 @@
 <body>
 
 <!-- ===== Auth screen ===== -->
-<div class="wrap" id="authScreen">
-  <header class="top">
-    <h1>OnClock</h1>
-  </header>
+<div id="authScreen" class="auth-screen">
   <div class="auth-card">
-    <h2 id="authTitle">Sign in</h2>
+    <img src="icons/icon-192.png" alt="" class="auth-logo">
+    <h1 class="auth-brand">OnClock</h1>
+    <p class="auth-subtitle" id="authSubtitle">Sign in with your email and password.</p>
     <form id="authForm">
       <div id="nameField" style="display:none;">
         <label for="nameInput">Your name</label>
@@ -39,7 +38,7 @@
       <input type="email" id="emailInput" required autocomplete="email">
       <label for="passwordInput">Password</label>
       <input type="password" id="passwordInput" required autocomplete="current-password" minlength="6">
-      <button type="submit" class="btn" id="authSubmitBtn">Sign in</button>
+      <button type="submit" class="btn auth-submit" id="authSubmitBtn">Sign In</button>
       <div class="auth-error" id="authError"></div>
       <div class="auth-info" id="authInfo"></div>
     </form>
