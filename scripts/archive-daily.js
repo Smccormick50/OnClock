@@ -76,7 +76,7 @@ async function main() {
   let archived = 0;
   for (const docSnap of snap.docs) {
     const data = docSnap.data();
-    const hasContent = (data.sessions && data.sessions.length) || (data.notes && data.notes.length);
+    const hasContent = (data.sessions && data.sessions.length) || (data.notes && data.notes.length) || (data.completedTodos && data.completedTodos.length);
     if (!hasContent) continue;
 
     const month = dateStr.slice(0, 7); // "YYYY-MM"
@@ -87,6 +87,7 @@ async function main() {
       month,
       sessions: data.sessions || [],
       notes: data.notes || [],
+      completedTodos: data.completedTodos || [],
       totalMinutes: totalMinutesFor(data),
       archivedAt: new Date().toISOString(),
     });
