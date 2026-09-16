@@ -243,6 +243,15 @@
     (data.completedTodos || []).splice(idx, 1);
     saveEntry(user.id, user.name, selectedDate, data);
   }
+  function doEditCompletedTodo(user, idx, newText, timeVal) {
+    var data = clone(getEntry(user.id));
+    var ct = (data.completedTodos || [])[idx];
+    if (!ct) return;
+    newText = newText.trim();
+    if (newText) ct.text = newText;
+    if (timeVal) ct.completedAt = fromTimeInputValue(selectedDate, timeVal);
+    saveEntry(user.id, user.name, selectedDate, data);
+  }
   function doDeleteSession(user, idx) {
     var data = clone(getEntry(user.id));
     data.sessions.splice(idx, 1);
@@ -380,12 +389,7 @@
           bodyDiv.classList.add("todo-done");
           bodyDiv.textContent = "\u2713 " + r.text;
           li.appendChild(bodyDiv);
-          var delTodo = document.createElement("button");
-          delTodo.className = "del";
-          delTodo.title = "Remove this from the log";
-          delTodo.textContent = "\u2715";
-          delTodo.onclick = function () { doDeleteCompletedTodo(user, r.idx); };
-          li.appendChild(delTodo);
+          li.appendChild(makeTodoEditControls(user, r.idx, r.text, r.t));
         } else {
           bodyDiv.textContent = r.text;
           li.appendChild(bodyDiv);
@@ -491,6 +495,64 @@
       box.className = "edit-inline";
       box.style.flex = "1";
       box.appendChild(input);
+      box.appendChild(saveBtn);
+      row.appendChild(box);
+      editLink.disabled = true;
+    };
+
+    wrap.appendChild(editLink);
+    wrap.appendChild(delBtn);
+    return wrap;
+  }
+
+  // Lets an admin correct a completed to-do's text and/or the time it
+  // was completed, in one inline editor.
+  function makeTodoEditControls(user, idx, currentText, currentTimeIso) {
+    var wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "2px";
+
+    var editLink = document.createElement("button");
+    editLink.className = "edit-link";
+    editLink.textContent = "edit";
+    var delBtn = document.createElement("button");
+    delBtn.className = "del";
+    delBtn.title = "Remove this from the log";
+    delBtn.textContent = "\u2715";
+    delBtn.onclick = function () { doDeleteCompletedTodo(user, idx); };
+
+    editLink.onclick = function () {
+      var textInput = document.createElement("input");
+      textInput.type = "text";
+      textInput.value = currentText;
+      textInput.style.flex = "1";
+      textInput.style.minWidth = "140px";
+      textInput.style.fontFamily = "'Source Sans 3', sans-serif";
+      textInput.style.fontSize = "16px";
+      textInput.style.padding = "3px 6px";
+      textInput.style.border = "1px solid var(--line)";
+      textInput.style.borderRadius = "4px";
+      textInput.style.background = "var(--paper)";
+      textInput.style.color = "var(--ink)";
+
+      var timeInput = document.createElement("input");
+      timeInput.type = "time";
+      timeInput.value = currentTimeIso ? new Date(currentTimeIso).toTimeString().slice(0, 5) : "";
+
+      var saveBtn = document.createElement("button");
+      saveBtn.textContent = "Save";
+      saveBtn.onclick = function () { doEditCompletedTodo(user, idx, textInput.value, timeInput.value); };
+      textInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") saveBtn.click();
+      });
+
+      var row = wrap.parentElement;
+      var box = document.createElement("div");
+      box.className = "edit-inline";
+      box.style.flex = "1";
+      box.appendChild(textInput);
+      box.appendChild(timeInput);
       box.appendChild(saveBtn);
       row.appendChild(box);
       editLink.disabled = true;
