@@ -20,7 +20,25 @@
       users = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
       users.sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
       render();
+      populatePeriodEmployeeDropdown();
     }, function (err) { console.error("users snapshot error", err); });
+  }
+
+  function populatePeriodEmployeeDropdown() {
+    var select = document.getElementById("periodEmployee");
+    if (!select) return;
+    var previousValue = select.value;
+    select.innerHTML = '<option value="">All employees</option>';
+    users.forEach(function (user) {
+      var opt = document.createElement("option");
+      opt.value = user.id;
+      opt.textContent = user.name;
+      select.appendChild(opt);
+    });
+    // Keep whatever was selected, if that person still exists in the list.
+    if (previousValue && users.some(function (u) { return u.id === previousValue; })) {
+      select.value = previousValue;
+    }
   }
 
   function subscribeEntriesForDate(dateStr) {
@@ -30,7 +48,7 @@
       entriesByUid = {};
       snap.docs.forEach(function (d) {
         var data = d.data();
-        entriesByUid[data.uid] = { sessions: data.sessions || [], notes: data.notes || [] };
+        entriesByUid[data.uid] = { sessions: data.sessions || [], notes: data.notes || [], completedTodos: data.completedTodos || [] };
       });
       render();
     }, function (err) { console.error("entries snapshot error", err); });
@@ -96,6 +114,7 @@
   function calcPayPeriod() {
     var start = document.getElementById("periodStart").value;
     var end = document.getElementById("periodEnd").value;
+    var selectedUid = document.getElementById("periodEmployee").value;
     var listEl = document.getElementById("payPeriodList");
     var csvBtn = document.getElementById("periodCsvBtn");
     if (!start || !end || start > end) {
@@ -104,16 +123,20 @@
       return;
     }
     listEl.innerHTML = '<div class="log-empty">Calculating…</div>';
+    // Fetched unfiltered by employee (date range only) so this never
+    // needs its own composite index — narrowing to one person, if
+    // requested, happens client-side just below.
     db.collection("entries").where("date", ">=", start).where("date", "<=", end).get()
       .then(function (snap) {
-        var dayRows = []; // {name, date, totalMinutes, notes}
+        var dayRows = []; // {uid, name, date, totalMinutes, notes}
         snap.docs.forEach(function (d) {
           var data = d.data();
+          if (selectedUid && data.uid !== selectedUid) return;
           var mins = totalMinutesFor({ sessions: data.sessions || [] });
           var notesJoined = (data.notes || []).map(function (n) { return n.text; }).join(" / ");
-          dayRows.push({ name: data.name || "Employee", date: data.date, totalMinutes: mins, notes: notesJoined });
+          dayRows.push({ uid: data.uid, name: data.name || "Employee", date: data.date, totalMinutes: mins, notes: notesJoined });
         });
-        renderPayPeriod(dayRows, start, end);
+        renderPayPeriod(dayRows, start, end, selectedUid);
       })
       .catch(function (err) {
         console.error("pay period query error", err);
@@ -122,7 +145,7 @@
       });
   }
 
-  function renderPayPeriod(dayRows, start, end) {
+  function renderPayPeriod(dayRows, start, end, selectedUid) {
     lastPeriodRows = dayRows;
     lastPeriodRange = { start: start, end: end };
     var listEl = document.getElementById("payPeriodList");
@@ -130,36 +153,55 @@
     listEl.innerHTML = "";
 
     if (dayRows.length === 0) {
-      listEl.innerHTML = '<div class="log-empty">Nobody logged anything in that range.</div>';
+      listEl.innerHTML = selectedUid
+        ? '<div class="log-empty">That employee logged nothing in that range.</div>'
+        : '<div class="log-empty">Nobody logged anything in that range.</div>';
       csvBtn.style.display = "none";
       return;
     }
 
-    var totalsByName = {};
-    dayRows.forEach(function (r) {
-      totalsByName[r.name] = (totalsByName[r.name] || 0) + r.totalMinutes;
-    });
-
-    Object.keys(totalsByName).sort().forEach(function (name) {
+    function addRow(left, right, bold) {
       var row = document.createElement("div");
-      row.className = "history-row";
       row.style.display = "flex";
       row.style.justifyContent = "space-between";
       row.style.alignItems = "center";
       row.style.padding = "8px 0";
       row.style.borderBottom = "1px dashed var(--line)";
-      var left = document.createElement("span");
-      left.style.fontFamily = "'Barlow Condensed', sans-serif";
-      left.style.fontWeight = "600";
-      left.style.fontSize = "16px";
-      left.textContent = name;
-      var right = document.createElement("span");
-      right.style.fontFamily = "'Space Mono', monospace";
-      right.textContent = fmtDuration(totalsByName[name]);
-      row.appendChild(left);
-      row.appendChild(right);
+      var leftEl = document.createElement("span");
+      leftEl.style.fontFamily = "'Barlow Condensed', sans-serif";
+      leftEl.style.fontWeight = bold ? "700" : "600";
+      leftEl.style.fontSize = bold ? "17px" : "16px";
+      leftEl.style.color = bold ? "var(--pine)" : "var(--ink)";
+      leftEl.textContent = left;
+      var rightEl = document.createElement("span");
+      rightEl.style.fontFamily = "'Space Mono', monospace";
+      rightEl.style.fontWeight = bold ? "700" : "400";
+      rightEl.textContent = right;
+      row.appendChild(leftEl);
+      row.appendChild(rightEl);
       listEl.appendChild(row);
-    });
+    }
+
+    if (selectedUid) {
+      // One employee selected: show a day-by-day breakdown instead of
+      // a single aggregate row, since that's the more useful view
+      // when you've already narrowed down to one person.
+      var sorted = dayRows.slice().sort(function (a, b) { return a.date.localeCompare(b.date); });
+      var total = 0;
+      sorted.forEach(function (r) {
+        addRow(fmtHeaderDate(r.date), fmtDuration(r.totalMinutes), false);
+        total += r.totalMinutes;
+      });
+      addRow("Total — " + sorted[0].name, fmtDuration(total), true);
+    } else {
+      var totalsByName = {};
+      dayRows.forEach(function (r) {
+        totalsByName[r.name] = (totalsByName[r.name] || 0) + r.totalMinutes;
+      });
+      Object.keys(totalsByName).sort().forEach(function (name) {
+        addRow(name, fmtDuration(totalsByName[name]), false);
+      });
+    }
 
     csvBtn.style.display = "inline-block";
   }
@@ -180,11 +222,25 @@
 
   // ---------- editing an employee's entry (admin correction) ----------
   function saveEntry(uid, name, dateStr, data) {
-    return entryRefFor(uid, dateStr).set({ uid: uid, name: name, date: dateStr, sessions: data.sessions, notes: data.notes });
+    return entryRefFor(uid, dateStr).set({ uid: uid, name: name, date: dateStr, sessions: data.sessions, notes: data.notes, completedTodos: data.completedTodos || [] });
   }
   function doDeleteNote(user, idx) {
     var data = clone(getEntry(user.id));
     data.notes.splice(idx, 1);
+    saveEntry(user.id, user.name, selectedDate, data);
+  }
+  function doEditNote(user, idx, newText) {
+    newText = newText.trim();
+    if (!newText) return;
+    var data = clone(getEntry(user.id));
+    var note = data.notes[idx];
+    if (!note) return;
+    note.text = newText;
+    saveEntry(user.id, user.name, selectedDate, data);
+  }
+  function doDeleteCompletedTodo(user, idx) {
+    var data = clone(getEntry(user.id));
+    (data.completedTodos || []).splice(idx, 1);
     saveEntry(user.id, user.name, selectedDate, data);
   }
   function doDeleteSession(user, idx) {
@@ -285,6 +341,9 @@
     (data.notes || []).forEach(function (n, idx) {
       rows.push({ t: n.time, type: "note", idx: idx, text: n.text });
     });
+    (data.completedTodos || []).forEach(function (ct, idx) {
+      rows.push({ t: ct.completedAt, type: "todo", idx: idx, text: ct.text });
+    });
     rows.sort(function (a, b) { return new Date(a.t) - new Date(b.t); });
 
     var list = document.createElement("ul");
@@ -317,15 +376,20 @@
           bodyDiv.appendChild(dur);
           li.appendChild(bodyDiv);
           li.appendChild(makeSessionEditControls(user, r.idx, "clockOut"));
+        } else if (r.type === "todo") {
+          bodyDiv.classList.add("todo-done");
+          bodyDiv.textContent = "\u2713 " + r.text;
+          li.appendChild(bodyDiv);
+          var delTodo = document.createElement("button");
+          delTodo.className = "del";
+          delTodo.title = "Remove this from the log";
+          delTodo.textContent = "\u2715";
+          delTodo.onclick = function () { doDeleteCompletedTodo(user, r.idx); };
+          li.appendChild(delTodo);
         } else {
           bodyDiv.textContent = r.text;
           li.appendChild(bodyDiv);
-          var del = document.createElement("button");
-          del.className = "del";
-          del.title = "Delete note";
-          del.textContent = "\u2715";
-          del.onclick = function () { doDeleteNote(user, r.idx); };
-          li.appendChild(del);
+          li.appendChild(makeNoteEditControls(user, r.idx, r.text));
         }
         list.appendChild(li);
       });
@@ -377,6 +441,55 @@
       var row = wrap.parentElement;
       var box = document.createElement("div");
       box.className = "edit-inline";
+      box.appendChild(input);
+      box.appendChild(saveBtn);
+      row.appendChild(box);
+      editLink.disabled = true;
+    };
+
+    wrap.appendChild(editLink);
+    wrap.appendChild(delBtn);
+    return wrap;
+  }
+
+  function makeNoteEditControls(user, idx, currentText) {
+    var wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "2px";
+
+    var editLink = document.createElement("button");
+    editLink.className = "edit-link";
+    editLink.textContent = "edit";
+    var delBtn = document.createElement("button");
+    delBtn.className = "del";
+    delBtn.title = "Delete this note";
+    delBtn.textContent = "\u2715";
+    delBtn.onclick = function () { doDeleteNote(user, idx); };
+
+    editLink.onclick = function () {
+      var input = document.createElement("input");
+      input.type = "text";
+      input.value = currentText;
+      input.style.flex = "1";
+      input.style.minWidth = "160px";
+      input.style.fontFamily = "'Source Sans 3', sans-serif";
+      input.style.fontSize = "16px";
+      input.style.padding = "3px 6px";
+      input.style.border = "1px solid var(--line)";
+      input.style.borderRadius = "4px";
+      input.style.background = "var(--paper)";
+      input.style.color = "var(--ink)";
+      var saveBtn = document.createElement("button");
+      saveBtn.textContent = "Save";
+      saveBtn.onclick = function () { doEditNote(user, idx, input.value); };
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") saveBtn.click();
+      });
+      var row = wrap.parentElement;
+      var box = document.createElement("div");
+      box.className = "edit-inline";
+      box.style.flex = "1";
       box.appendChild(input);
       box.appendChild(saveBtn);
       row.appendChild(box);
