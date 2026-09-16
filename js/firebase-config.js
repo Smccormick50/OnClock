@@ -7,12 +7,12 @@
 // not by hiding this file.
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBLnu69Z0ne7Cy9yXXmVWTk9jKJ31LEHtI",
-  authDomain: "onclock-78d0f.firebaseapp.com",
-  projectId: "onclock-78d0f",
-  storageBucket: "onclock-78d0f.firebasestorage.app",
-  messagingSenderId: "649136788295",
-  appId: "1:649136788295:web:92842189fa1643624e7262"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
 };
 
 firebase.initializeApp(firebaseConfig);
