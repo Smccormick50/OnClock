@@ -218,3 +218,4 @@ function exportDayPdf(personName, dateStr, data) {
 
   var safeName = personName.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
   doc.save("worklog-" + safeName + "-" + dateStr + ".pdf");
+}
