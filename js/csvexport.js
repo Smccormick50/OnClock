@@ -30,8 +30,10 @@ function downloadCsvFile(filename, rows) {
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 }
 
-// One day's detail — mirrors the PDF export, as a CSV.
-function exportDayCsv(personName, dateStr, data) {
+// One day's detail — mirrors the PDF export, as a CSV. `pendingTodos`
+// is optional (only meaningful for today's live list — see the note
+// in pdfexport.js).
+function exportDayCsv(personName, dateStr, data, pendingTodos) {
   personName = personName || "Employee";
   var rows = [];
   rows.push(["Employee", personName]);
@@ -57,6 +59,14 @@ function exportDayCsv(personName, dateStr, data) {
   entries.forEach(function (e) {
     rows.push([fmtTime(e.t), e.type, e.detail]);
   });
+
+  if (pendingTodos && pendingTodos.length > 0) {
+    rows.push([]);
+    rows.push(["Pending to-dos (not yet done)"]);
+    pendingTodos.forEach(function (item) {
+      rows.push(["", "", item.text]);
+    });
+  }
 
   var safeName = personName.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
   downloadCsvFile("worklog-" + safeName + "-" + dateStr + ".csv", rows);
@@ -91,4 +101,27 @@ function exportRangeCsv(dayRows, startStr, endStr) {
   });
 
   downloadCsvFile("pay-period-" + startStr + "-to-" + endStr + ".csv", rows);
+}
+
+// Standalone export of someone's current open to-do list, for sharing.
+function exportTodoListCsv(personName, items) {
+  personName = personName || "Employee";
+  items = items || [];
+  var rows = [];
+  rows.push(["To-Do List"]);
+  rows.push(["From", personName]);
+  rows.push(["As of", new Date().toLocaleString()]);
+  rows.push([]);
+  rows.push(["Task"]);
+  if (items.length === 0) {
+    rows.push(["(nothing on the list)"]);
+  } else {
+    items.forEach(function (item) {
+      rows.push([item.text]);
+    });
+  }
+
+  var safeName = personName.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+  var safeDate = localDateStr(new Date());
+  downloadCsvFile("todo-list-" + safeName + "-" + safeDate + ".csv", rows);
 }
