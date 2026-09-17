@@ -425,8 +425,9 @@
       viewBtn.className = "btn secondary";
       viewBtn.style.padding = "4px 10px";
       viewBtn.style.fontSize = "14px";
-      viewBtn.textContent = "View";
-      viewBtn.onclick = function () { switchToDate(e.id); };
+      var isActive = e.id === viewedDate;
+      viewBtn.textContent = isActive ? "Close" : "View";
+      viewBtn.onclick = function () { switchToDate(isActive ? todayStr : e.id); };
       right.appendChild(total);
       right.appendChild(viewBtn);
       row.appendChild(left);
@@ -439,7 +440,11 @@
     viewedDate = dateStr;
     subscribeToDay(dateStr);
     renderViewed();
+    renderHistoryList(lastHistoryEntries);
+    document.getElementById("logTitle").scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  var lastHistoryEntries = [];
 
   function subscribeToDay(dateStr) {
     if (unsubViewed) { unsubViewed(); unsubViewed = null; }
@@ -464,6 +469,7 @@
           docCache[data.date] = { sessions: data.sessions || [], notes: data.notes || [], completedTodos: data.completedTodos || [] };
           if (data.date !== todayStr) entries.push({ id: data.date, data: docCache[data.date] });
         });
+        lastHistoryEntries = entries;
         renderHistoryList(entries);
       }, function (err) { console.error("history snapshot error", err); });
   }
