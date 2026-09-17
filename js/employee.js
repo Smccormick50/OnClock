@@ -469,11 +469,13 @@
   }
 
   function exportPdf() {
-    exportDayPdf(currentProfile.name, viewedDate, getDayData(viewedDate));
+    var pending = viewedDate === todayStr ? todoItems : null;
+    exportDayPdf(currentProfile.name, viewedDate, getDayData(viewedDate), pending);
   }
 
   function exportCsv() {
-    exportDayCsv(currentProfile.name, viewedDate, getDayData(viewedDate));
+    var pending = viewedDate === todayStr ? todoItems : null;
+    exportDayCsv(currentProfile.name, viewedDate, getDayData(viewedDate), pending);
   }
 
   function subscribeArchives() {
@@ -503,6 +505,12 @@
     document.getElementById("todoInput").addEventListener("keydown", function (e) {
       if (e.key === "Enter") document.getElementById("todoAddBtn").click();
     });
+    document.getElementById("todoExportPdfBtn").onclick = function () {
+      exportTodoListPdf(currentProfile.name, todoItems);
+    };
+    document.getElementById("todoExportCsvBtn").onclick = function () {
+      exportTodoListCsv(currentProfile.name, todoItems);
+    };
     document.getElementById("exportBtn").onclick = exportPdf;
     document.getElementById("exportCsvBtn").onclick = exportCsv;
     document.getElementById("backToToday").onclick = function () { switchToDate(todayStr); };
