@@ -2,10 +2,21 @@ name: Archive daily logs
 
 on:
   schedule:
-    # Runs at :55 past every hour, UTC. The script itself checks
-    # whether it's currently 11pm in TIME_ZONE (see archive-daily.js)
-    # and does nothing the other 23 times a day.
-    - cron: "55 * * * *"
+    # Targets 11:59pm America/Chicago directly, in UTC, since cron
+    # can't express a local time zone. Two entries because the UTC
+    # offset changes with daylight saving:
+    #   - "59 4 * * *"  = 23:59 CDT (UTC-5, roughly Mar-Nov)
+    #   - "59 5 * * *"  = 23:59 CST (UTC-6, roughly Nov-Mar)
+    # Whichever one lands outside the real 11pm hour self-skips (see
+    # archive-daily.js), so only one of these two actually archives
+    # on any given night. This intentionally schedules only 2 runs a
+    # day rather than 24 hourly ones — GitHub Actions does not
+    # guarantee scheduled workflows fire exactly on time and can skip
+    # runs under load, and that's more likely the more often a
+    # schedule fires. Two precise attempts a day is far more reliable
+    # in practice than 24 hourly "is it time yet?" checks.
+    - cron: "59 4 * * *"
+    - cron: "59 5 * * *"
   workflow_dispatch:
     inputs:
       date:
