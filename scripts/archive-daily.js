@@ -39,27 +39,40 @@ function totalMinutesFor(data) {
 async function main() {
   const now = new Date();
   const isManualRun = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
+  const chiHour = tzHour(now, TIME_ZONE);
 
-  // The workflow runs hourly; only actually archive at the 11pm hour,
-  // unless someone manually triggered it from the GitHub Actions tab
-  // (to test, or to re-archive a specific date — see below).
-  if (!isManualRun && tzHour(now, TIME_ZONE) !== 23) {
-    console.log(`Not the 11pm hour in ${TIME_ZONE} (it's ${tzHour(now, TIME_ZONE)}:xx there) — skipping.`);
+  // The two scheduled runs target 11:59pm Chicago time directly (see
+  // the workflow file), but GitHub Actions doesn't guarantee exact
+  // timing — a run can land a little late. So the real window is
+  // "the 11pm hour, or shortly after midnight" (a late run in that
+  // grace period still means archiving *yesterday*, not the new day
+  // that just started). Anything outside that, for a scheduled run,
+  // is skipped; a manual run always proceeds regardless of the hour.
+  let targetDate;
+  if (chiHour === 23) {
+    targetDate = tzDateStr(now, TIME_ZONE);
+  } else if (chiHour === 0) {
+    const anHourAgo = new Date(now.getTime() - 3600 * 1000);
+    targetDate = tzDateStr(anHourAgo, TIME_ZONE);
+  } else if (!isManualRun) {
+    console.log(`Not the 11pm hour (or just after midnight) in ${TIME_ZONE} — it's ${chiHour}:xx there — skipping.`);
     return;
+  } else {
+    targetDate = tzDateStr(now, TIME_ZONE);
   }
 
   // A manual run can target a specific past date (e.g. after an admin
   // corrects a day's punches, to refresh that day's saved PDF) via the
-  // workflow's "date" input. Falls back to today if left blank, or if
-  // it's not a well-formed YYYY-MM-DD (so a typo can't silently no-op
-  // against some unintended date).
-  let dateStr = tzDateStr(now, TIME_ZONE);
+  // workflow's "date" input. Falls back to the date resolved above if
+  // left blank, or if it's not a well-formed YYYY-MM-DD (so a typo
+  // can't silently no-op against some unintended date).
+  let dateStr = targetDate;
   const requestedDate = (process.env.ARCHIVE_DATE || "").trim();
   if (requestedDate) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
       dateStr = requestedDate;
     } else {
-      console.warn(`"${requestedDate}" isn't a valid YYYY-MM-DD date — archiving today (${dateStr}) instead.`);
+      console.warn(`"${requestedDate}" isn't a valid YYYY-MM-DD date — archiving ${dateStr} instead.`);
     }
   }
 
