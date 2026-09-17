@@ -407,6 +407,8 @@
       row.style.display = "flex";
       row.style.justifyContent = "space-between";
       row.style.alignItems = "center";
+      row.style.flexWrap = "wrap";
+      row.style.gap = "6px";
       row.style.padding = "8px 0";
       row.style.borderBottom = "1px dashed var(--line)";
       var left = document.createElement("span");
@@ -417,6 +419,7 @@
       right.style.display = "flex";
       right.style.gap = "10px";
       right.style.alignItems = "center";
+      right.style.flexWrap = "wrap";
       var total = document.createElement("span");
       total.style.fontFamily = "'Space Mono', monospace";
       total.style.color = "var(--ink-soft)";
@@ -430,6 +433,24 @@
       viewBtn.onclick = function () { switchToDate(isActive ? todayStr : e.id); };
       right.appendChild(total);
       right.appendChild(viewBtn);
+
+      var archived = archivesByDate[e.id];
+      if (archived) {
+        var pdfBtn = document.createElement("button");
+        pdfBtn.className = "btn secondary";
+        pdfBtn.style.padding = "4px 10px";
+        pdfBtn.style.fontSize = "14px";
+        pdfBtn.title = "The saved PDF snapshot from 11:59pm that night";
+        pdfBtn.textContent = "PDF";
+        pdfBtn.onclick = function () {
+          exportDayPdf(archived.name, archived.date, {
+            sessions: archived.sessions || [],
+            notes: archived.notes || [],
+            completedTodos: archived.completedTodos || []
+          });
+        };
+        right.appendChild(pdfBtn);
+      }
       row.appendChild(left);
       row.appendChild(right);
       listEl.appendChild(row);
@@ -484,10 +505,16 @@
     exportDayCsv(currentProfile.name, viewedDate, getDayData(viewedDate), pending);
   }
 
+  var archivesByDate = {};
+
   function subscribeArchives() {
     unsubArchives = db.collection("archives").where("uid", "==", currentUser.uid).onSnapshot(function (snap) {
-      var docs = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
-      renderArchiveGroups(document.getElementById("archivesList"), docs, false);
+      archivesByDate = {};
+      snap.docs.forEach(function (d) {
+        var data = d.data();
+        archivesByDate[data.date] = data;
+      });
+      renderHistoryList(lastHistoryEntries);
     }, function (err) { console.error("archives snapshot error", err); });
   }
 
