@@ -331,9 +331,19 @@ header.top .links a, header.top .links button {
   color: var(--ink);
   margin-bottom: 10px;
 }
+.read-only-note {
+  background: var(--pine-tint);
+  border: 1px solid var(--pine);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--pine);
+  margin-bottom: 10px;
+  font-weight: 600;
+}
 .status-note { font-size: 13px; color: var(--ink-soft); text-align: center; margin: 0 0 16px; }
 
-.tab-row { display: flex; gap: 6px; margin-bottom: 14px; }
+.tab-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .tab-btn {
   font-family: 'Barlow Condensed', sans-serif;
   font-weight: 600;
