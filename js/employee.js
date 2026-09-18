@@ -131,11 +131,16 @@
         input.style.color = "var(--ink)";
         var saveBtn = document.createElement("button");
         saveBtn.textContent = "Save";
-        saveBtn.onclick = function () { doEditTodo(idx, input.value); };
+        var box = document.createElement("div");
+        saveBtn.onclick = function () {
+          doEditTodo(idx, input.value);
+          textSpan.textContent = input.value.trim() || item.text;
+          li.replaceChild(textSpan, box);
+          editLink.disabled = false;
+        };
         input.addEventListener("keydown", function (e) {
           if (e.key === "Enter") saveBtn.click();
         });
-        var box = document.createElement("div");
         box.className = "edit-inline";
         box.style.flex = "1";
         box.appendChild(input);
@@ -186,13 +191,13 @@
     data.notes.splice(idx, 1);
     saveDay(dateStr, data);
   }
-  function doEditNote(dateStr, idx, newText) {
-    newText = newText.trim();
-    if (!newText) return;
+  function doEditNote(dateStr, idx, newText, timeVal) {
     var data = clone(getDayData(dateStr));
     var note = data.notes[idx];
     if (!note) return;
-    note.text = newText;
+    newText = newText.trim();
+    if (newText) note.text = newText;
+    if (timeVal) note.time = fromTimeInputValue(dateStr, timeVal);
     saveDay(dateStr, data);
   }
   function doDeleteSession(dateStr, idx) {
@@ -303,7 +308,7 @@
         } else {
           bodyDiv.textContent = r.text;
           li.appendChild(bodyDiv);
-          li.appendChild(makeNoteEditControls(viewedDate, r.idx, r.text));
+          li.appendChild(makeNoteEditControls(viewedDate, r.idx, r.text, r.t));
         }
         list.appendChild(li);
       });
@@ -334,9 +339,13 @@
       input.value = currentIso ? new Date(currentIso).toTimeString().slice(0, 5) : "";
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
-      saveBtn.onclick = function () { doEditSession(dateStr, idx, field, input.value); };
-      var row = wrap.parentElement;
       var box = document.createElement("div");
+      saveBtn.onclick = function () {
+        doEditSession(dateStr, idx, field, input.value);
+        box.remove();
+        editLink.disabled = false;
+      };
+      var row = wrap.parentElement;
       box.className = "edit-inline";
       box.appendChild(input);
       box.appendChild(saveBtn);
@@ -349,7 +358,7 @@
     return wrap;
   }
 
-  function makeNoteEditControls(dateStr, idx, currentText) {
+  function makeNoteEditControls(dateStr, idx, currentText, currentTimeIso) {
     var wrap = document.createElement("div");
     wrap.style.display = "flex";
     wrap.style.alignItems = "center";
@@ -369,7 +378,7 @@
       input.type = "text";
       input.value = currentText;
       input.style.flex = "1";
-      input.style.minWidth = "160px";
+      input.style.minWidth = "140px";
       input.style.fontFamily = "'Source Sans 3', sans-serif";
       input.style.fontSize = "16px";
       input.style.padding = "3px 6px";
@@ -377,17 +386,28 @@
       input.style.borderRadius = "4px";
       input.style.background = "var(--paper)";
       input.style.color = "var(--ink)";
+
+      var timeInput = document.createElement("input");
+      timeInput.type = "time";
+      timeInput.value = currentTimeIso ? new Date(currentTimeIso).toTimeString().slice(0, 5) : "";
+
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
-      saveBtn.onclick = function () { doEditNote(dateStr, idx, input.value); };
+      var box = document.createElement("div");
+      saveBtn.onclick = function () {
+        doEditNote(dateStr, idx, input.value, timeInput.value);
+        box.remove();
+        editLink.disabled = false;
+      };
       input.addEventListener("keydown", function (e) {
         if (e.key === "Enter") saveBtn.click();
       });
+
       var row = wrap.parentElement;
-      var box = document.createElement("div");
       box.className = "edit-inline";
       box.style.flex = "1";
       box.appendChild(input);
+      box.appendChild(timeInput);
       box.appendChild(saveBtn);
       row.appendChild(box);
       editLink.disabled = true;
@@ -435,13 +455,17 @@
 
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
-      saveBtn.onclick = function () { doEditCompletedTodo(dateStr, idx, textInput.value, timeInput.value); };
+      var box = document.createElement("div");
+      saveBtn.onclick = function () {
+        doEditCompletedTodo(dateStr, idx, textInput.value, timeInput.value);
+        box.remove();
+        editLink.disabled = false;
+      };
       textInput.addEventListener("keydown", function (e) {
         if (e.key === "Enter") saveBtn.click();
       });
 
       var row = wrap.parentElement;
-      var box = document.createElement("div");
       box.className = "edit-inline";
       box.style.flex = "1";
       box.appendChild(textInput);
