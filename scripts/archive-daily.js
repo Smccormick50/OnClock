@@ -31,9 +31,50 @@ function minutesBetween(startIso, endIso) {
 function totalMinutesFor(data) {
   let total = 0;
   (data.sessions || []).forEach((s) => {
-    if (s.clockOut) total += minutesBetween(s.clockIn, s.clockOut);
+    if (s.clockIn && s.clockOut) total += minutesBetween(s.clockIn, s.clockOut);
   });
   return total;
+}
+
+// Converts a wall-clock time on a given date, in TIME_ZONE, to the
+// correct UTC instant — accounting for whichever side of daylight
+// saving that date falls on. Used to auto-clock-out anyone still
+// clocked in at day's end, so an open session can't silently run
+// away and rack up hours into the next day (or forever, if someone
+// forgets to clock out and no one catches it).
+function wallTimeToUtcIso(dateStr, hh, mm, ss) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  let guess = new Date(Date.UTC(y, m - 1, d, hh, mm, ss || 0));
+  for (let i = 0; i < 3; i++) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: TIME_ZONE, hourCycle: "h23",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(guess);
+    const map = {};
+    parts.forEach((p) => { map[p.type] = p.value; });
+    const asUtc = Date.UTC(Number(map.year), Number(map.month) - 1, Number(map.day), Number(map.hour), Number(map.minute), Number(map.second));
+    const desiredUtc = Date.UTC(y, m - 1, d, hh, mm, ss || 0);
+    const diff = desiredUtc - asUtc;
+    if (diff === 0) break;
+    guess = new Date(guess.getTime() + diff);
+  }
+  return guess.toISOString();
+}
+
+// If any session for the day has no clockOut, close it at 11:59:00pm
+// that day (TIME_ZONE). Scans the whole array rather than assuming
+// the open one is last — a backfilled punch could sit after it out
+// of chronological order. Returns true if it changed anything.
+function autoCloseOpenSession(data, dateStr) {
+  const sessions = data.sessions || [];
+  for (let i = sessions.length - 1; i >= 0; i--) {
+    if (sessions[i].clockIn && !sessions[i].clockOut) {
+      sessions[i].clockOut = wallTimeToUtcIso(dateStr, 23, 59, 0);
+      return true;
+    }
+  }
+  return false;
 }
 
 async function main() {
@@ -87,8 +128,22 @@ async function main() {
   const snap = await db.collection("entries").where("date", "==", dateStr).get();
 
   let archived = 0;
+  let autoClocked = 0;
   for (const docSnap of snap.docs) {
     const data = docSnap.data();
+
+    if (autoCloseOpenSession(data, dateStr)) {
+      await docSnap.ref.set({
+        uid: data.uid,
+        name: data.name || "Employee",
+        date: dateStr,
+        sessions: data.sessions,
+        notes: data.notes || [],
+        completedTodos: data.completedTodos || [],
+      });
+      autoClocked++;
+    }
+
     const hasContent = (data.sessions && data.sessions.length) || (data.notes && data.notes.length) || (data.completedTodos && data.completedTodos.length);
     if (!hasContent) continue;
 
@@ -107,7 +162,7 @@ async function main() {
     archived++;
   }
 
-  console.log(`Archived ${archived} log(s) for ${dateStr}.`);
+  console.log(`Archived ${archived} log(s) for ${dateStr}. Auto-clocked-out ${autoClocked} still-open session(s).`);
 }
 
 main().catch((err) => {
