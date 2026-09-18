@@ -48,17 +48,30 @@
 
   <div class="tab-row">
     <button class="tab-btn active" id="tabTodayBtn">Today</button>
+    <button class="tab-btn" id="tabPastDaysBtn">Past Days Logs</button>
     <button class="tab-btn" id="tabPayPeriodBtn">Pay Period</button>
     <button class="tab-btn" id="tabArchivesBtn">Archives</button>
   </div>
 
   <div class="panel" id="todayTab">
-    <div class="date-picker-row">
-      <label for="datePicker" style="font-family:'Barlow Condensed', sans-serif; font-weight:600; color:var(--pine);">Date:</label>
-      <input type="date" id="datePicker">
-      <button class="btn secondary" id="todayBtn" style="padding:8px 14px;">Today</button>
-    </div>
+    <h2>Today's employee logs <span class="total" id="todayDateLabel"></span></h2>
     <div id="employeeList"><div class="log-empty">Loading…</div></div>
+  </div>
+
+  <div class="panel" id="pastDaysTab" style="display:none;">
+    <h2 style="margin-bottom:6px;">Past days logs</h2>
+    <p class="status-note" style="margin-bottom:14px;">
+      Read-only history. Admins can view and export past logs, but cannot edit or delete them here.
+    </p>
+    <div class="date-picker-row">
+      <label for="pastDatePicker" style="font-family:'Barlow Condensed', sans-serif; font-weight:600; color:var(--pine);">Date:</label>
+      <input type="date" id="pastDatePicker">
+      <label for="pastEmployee" style="font-family:'Barlow Condensed', sans-serif; font-weight:600; color:var(--pine);">Employee:</label>
+      <select id="pastEmployee">
+        <option value="">All employees</option>
+      </select>
+    </div>
+    <div id="pastEmployeeList"><div class="log-empty">Choose a past date.</div></div>
   </div>
 
   <div class="panel" id="payPeriodTab" style="display:none;">
