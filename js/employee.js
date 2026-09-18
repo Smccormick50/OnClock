@@ -297,6 +297,23 @@
     }, completedTrips);
   }
 
+  function doExportMileagePdf() {
+    var completedTrips = mileageTrips.filter(tripIsComplete);
+    var inProgressCount = mileageTrips.length - completedTrips.length;
+    if (completedTrips.length === 0) {
+      alert("Finish at least one trip by entering its ending mileage before exporting.");
+      return;
+    }
+    if (inProgressCount > 0) {
+      alert(inProgressCount + " in-progress trip(s) will stay saved and will not be included in this PDF.");
+    }
+    exportMileagePdf({
+      name: currentProfile.name,
+      employeeNumber: currentProfile.employeeNumber || "",
+      deptStore: currentProfile.deptStore || ""
+    }, completedTrips);
+  }
+
   function renderMileage() {
     var listEl = document.getElementById("mileageList");
     listEl.innerHTML = "";
@@ -836,7 +853,19 @@
     endOdoInput.removeAttribute("required");
     endOdoInput.placeholder = "Enter at end of day";
     document.getElementById("tripAddBtn").onclick = doAddOrUpdateTrip;
-    document.getElementById("mileageExportBtn").onclick = doExportMileage;
+    var mileageExcelBtn = document.getElementById("mileageExportBtn");
+    mileageExcelBtn.onclick = doExportMileage;
+    var mileagePdfBtn = document.getElementById("mileageExportPdfBtn");
+    if (!mileagePdfBtn) {
+      mileagePdfBtn = document.createElement("button");
+      mileagePdfBtn.type = "button";
+      mileagePdfBtn.id = "mileageExportPdfBtn";
+      mileagePdfBtn.className = mileageExcelBtn.className;
+      mileagePdfBtn.textContent = "Export Mileage Log (PDF)";
+      mileagePdfBtn.title = "Download the completed mileage reimbursement form as a PDF";
+      mileageExcelBtn.insertAdjacentElement("afterend", mileagePdfBtn);
+    }
+    mileagePdfBtn.onclick = doExportMileagePdf;
     document.getElementById("mileageClearBtn").onclick = doClearMileage;
     document.getElementById("mileageClearBtn").textContent = "Clear Completed";
     document.getElementById("exportBtn").onclick = exportPdf;
