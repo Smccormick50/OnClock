@@ -344,7 +344,7 @@
 
     var rows = [];
     (data.sessions || []).forEach(function (s, idx) {
-      rows.push({ t: s.clockIn, type: "in", idx: idx, sess: s });
+      if (s.clockIn) rows.push({ t: s.clockIn, type: "in", idx: idx, sess: s });
       if (s.clockOut) rows.push({ t: s.clockOut, type: "out", idx: idx, sess: s });
     });
     (data.notes || []).forEach(function (n, idx) {
@@ -378,11 +378,13 @@
           li.appendChild(makeSessionEditControls(user, r.idx, "clockIn"));
         } else if (r.type === "out") {
           bodyDiv.classList.add("session-out");
-          var dur = document.createElement("span");
-          dur.className = "dur";
-          dur.textContent = "(" + fmtDuration(minutesBetween(r.sess.clockIn, r.sess.clockOut)) + ")";
           bodyDiv.textContent = "Clocked out";
-          bodyDiv.appendChild(dur);
+          if (r.sess.clockIn) {
+            var dur = document.createElement("span");
+            dur.className = "dur";
+            dur.textContent = "(" + fmtDuration(minutesBetween(r.sess.clockIn, r.sess.clockOut)) + ")";
+            bodyDiv.appendChild(dur);
+          }
           li.appendChild(bodyDiv);
           li.appendChild(makeSessionEditControls(user, r.idx, "clockOut"));
         } else if (r.type === "todo") {

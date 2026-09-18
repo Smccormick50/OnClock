@@ -189,9 +189,9 @@ function exportDayPdf(personName, dateStr, data, pendingTodos) {
   // Merge everything into one time-ordered log, same as the app does.
   var rows = [];
   (data.sessions || []).forEach(function (s) {
-    rows.push({ t: s.clockIn, kind: "in", text: "Clocked in" });
+    if (s.clockIn) rows.push({ t: s.clockIn, kind: "in", text: "Clocked in" });
     if (s.clockOut) {
-      rows.push({ t: s.clockOut, kind: "out", text: "Clocked out", extra: "(" + fmtDuration(minutesBetween(s.clockIn, s.clockOut)) + ")" });
+      rows.push({ t: s.clockOut, kind: "out", text: "Clocked out", extra: s.clockIn ? "(" + fmtDuration(minutesBetween(s.clockIn, s.clockOut)) + ")" : "" });
     }
   });
   (data.notes || []).forEach(function (n) {

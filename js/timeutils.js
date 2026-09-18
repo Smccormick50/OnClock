@@ -34,8 +34,14 @@ function fromTimeInputValue(dateStr, timeVal) {
 function totalMinutesFor(data) {
   var total = 0;
   (data.sessions || []).forEach(function (s) {
-    if (s.clockOut) total += minutesBetween(s.clockIn, s.clockOut);
-    else total += minutesBetween(s.clockIn, new Date().toISOString());
+    // A manually added past-day punch can contain only a clock-in or
+    // only a clock-out. Unmatched punches stay visible in the log but
+    // do not create a made-up duration.
+    if (s.clockIn && s.clockOut) {
+      total += minutesBetween(s.clockIn, s.clockOut);
+    } else if (s.clockIn && localDateStr(new Date(s.clockIn)) === localDateStr(new Date())) {
+      total += minutesBetween(s.clockIn, new Date().toISOString());
+    }
   });
   return total;
 }
@@ -45,7 +51,7 @@ function currentOpenSession(data) {
   // (added out of chronological order) could otherwise hide a
   // genuinely still-open session sitting earlier in the array.
   for (var i = data.sessions.length - 1; i >= 0; i--) {
-    if (!data.sessions[i].clockOut) return data.sessions[i];
+    if (data.sessions[i].clockIn && !data.sessions[i].clockOut) return data.sessions[i];
   }
   return null;
 }

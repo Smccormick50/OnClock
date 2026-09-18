@@ -427,27 +427,43 @@
   function doAddPunch() {
     var inVal = document.getElementById("punchInTime").value;
     var outVal = document.getElementById("punchOutTime").value;
-    if (!inVal) {
-      alert("Enter at least a clock-in time.");
+    if (!inVal && !outVal) {
+      alert("Enter a clock-in time, a clock-out time, or both.");
       return;
     }
     var data = clone(getDayData(viewedDate));
     var isToday = viewedDate === todayStr;
-    if (!outVal && !isToday) {
-      alert("A clock-out time is required for a past day — only today can be left open.");
-      return;
-    }
-    if (!outVal && currentOpenSession(data)) {
+    if (inVal && !outVal && isToday && currentOpenSession(data)) {
       alert("You're already clocked in today. Add a clock-out time here, or use the Clock Out button above.");
       return;
     }
-    var clockIn = fromTimeInputValue(viewedDate, inVal);
+    var clockIn = inVal ? fromTimeInputValue(viewedDate, inVal) : null;
     var clockOut = outVal ? fromTimeInputValue(viewedDate, outVal) : null;
-    if (clockOut && new Date(clockOut) < new Date(clockIn)) {
+    if (clockIn && clockOut && new Date(clockOut) < new Date(clockIn)) {
       alert("Clock-out time should be after the clock-in time.");
       return;
     }
-    data.sessions.push({ clockIn: clockIn, clockOut: clockOut });
+
+    if (!clockIn && clockOut) {
+      // If this day already has an unmatched clock-in before the new
+      // clock-out, complete that session. Otherwise keep the clock-out
+      // as a standalone punch so the employee can record exactly what
+      // is known without inventing a clock-in time.
+      var openIndex = -1;
+      var latestOpenTime = -Infinity;
+      data.sessions.forEach(function (session, idx) {
+        if (!session.clockIn || session.clockOut) return;
+        var openTime = new Date(session.clockIn).getTime();
+        if (openTime <= new Date(clockOut).getTime() && openTime > latestOpenTime) {
+          openIndex = idx;
+          latestOpenTime = openTime;
+        }
+      });
+      if (openIndex >= 0) data.sessions[openIndex].clockOut = clockOut;
+      else data.sessions.push({ clockIn: null, clockOut: clockOut });
+    } else {
+      data.sessions.push({ clockIn: clockIn, clockOut: clockOut });
+    }
     saveDay(viewedDate, data);
     document.getElementById("punchInTime").value = "";
     document.getElementById("punchOutTime").value = "";
@@ -489,7 +505,7 @@
 
     var punchOutLabel = document.querySelector('label[for="punchOutTime"]');
     if (punchOutLabel) {
-      punchOutLabel.textContent = viewedDate === todayStr ? "Clock out (optional for today)" : "Clock out (required for past days)";
+      punchOutLabel.textContent = "Clock out (optional)";
     }
 
     var banner = document.getElementById("viewingBanner");
@@ -503,7 +519,7 @@
 
     var rows = [];
     (data.sessions || []).forEach(function (s, idx) {
-      rows.push({ t: s.clockIn, type: "in", idx: idx, sess: s });
+      if (s.clockIn) rows.push({ t: s.clockIn, type: "in", idx: idx, sess: s });
       if (s.clockOut) rows.push({ t: s.clockOut, type: "out", idx: idx, sess: s });
     });
     (data.notes || []).forEach(function (n, idx) {
@@ -537,12 +553,13 @@
           li.appendChild(makeSessionEditControls(viewedDate, r.idx, "clockIn"));
         } else if (r.type === "out") {
           bodyDiv.classList.add("session-out");
-          var dur = document.createElement("span");
-          dur.className = "dur";
-          if (!r.sess.clockOut) dur.setAttribute("data-running", "1");
-          dur.textContent = "(" + fmtDuration(minutesBetween(r.sess.clockIn, r.sess.clockOut)) + ")";
           bodyDiv.textContent = "Clocked out";
-          bodyDiv.appendChild(dur);
+          if (r.sess.clockIn) {
+            var dur = document.createElement("span");
+            dur.className = "dur";
+            dur.textContent = "(" + fmtDuration(minutesBetween(r.sess.clockIn, r.sess.clockOut)) + ")";
+            bodyDiv.appendChild(dur);
+          }
           li.appendChild(bodyDiv);
           li.appendChild(makeSessionEditControls(viewedDate, r.idx, "clockOut"));
         } else if (r.type === "todo") {

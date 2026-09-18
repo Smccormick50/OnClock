@@ -44,9 +44,9 @@ function exportDayCsv(personName, dateStr, data, pendingTodos) {
 
   var entries = [];
   (data.sessions || []).forEach(function (s) {
-    entries.push({ t: s.clockIn, type: "Clocked in", detail: "" });
+    if (s.clockIn) entries.push({ t: s.clockIn, type: "Clocked in", detail: "" });
     if (s.clockOut) {
-      entries.push({ t: s.clockOut, type: "Clocked out", detail: fmtDuration(minutesBetween(s.clockIn, s.clockOut)) });
+      entries.push({ t: s.clockOut, type: "Clocked out", detail: s.clockIn ? fmtDuration(minutesBetween(s.clockIn, s.clockOut)) : "" });
     }
   });
   (data.notes || []).forEach(function (n) {
