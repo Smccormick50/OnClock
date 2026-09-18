@@ -400,7 +400,9 @@ header.top .links a, header.top .links button {
   font-size: 16px; /* iOS: under 16px triggers auto-zoom on focus */
 }
 .mileage-trip-row { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; border-bottom: 1px dashed var(--line); }
+.mileage-trip-row.in-progress { background: rgba(255, 197, 37, 0.08); border-left: 3px solid #d7a400; padding-left: 8px; }
 .mileage-trip-main { flex: 1; font-size: 14px; line-height: 1.5; }
 .mileage-trip-main .trip-desc { font-weight: 600; color: var(--ink); }
 .mileage-trip-main .trip-meta { color: var(--ink-soft); font-family: 'Space Mono', monospace; font-size: 12.5px; }
 .mileage-trip-amount { font-family: 'Space Mono', monospace; font-size: 14px; color: var(--pine); font-weight: 600; white-space: nowrap; padding-top: 2px; }
+.mileage-trip-amount.is-pending { color: #8a6800; }
