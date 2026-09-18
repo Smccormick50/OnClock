@@ -11,6 +11,9 @@
   var unsubArchives = null;
   var unsubTodos = null;
   var todoItems = []; // the running, not-date-scoped to-do list
+  var unsubMileage = null;
+  var mileageTrips = []; // pending, not-yet-exported mileage trips
+  var editingTripIndex = null;
 
   function entryRef(dateStr) {
     return db.collection("entries").doc(entryId(currentUser.uid, dateStr));
@@ -161,6 +164,169 @@
       li.appendChild(del);
       listEl.appendChild(li);
     });
+  }
+
+  // ---------- mileage log (separate doc, not tied to a date) ----------
+  function mileageRef() {
+    return db.collection("mileage").doc(currentUser.uid);
+  }
+  function subscribeMileage() {
+    unsubMileage = mileageRef().onSnapshot(function (snap) {
+      mileageTrips = (snap.exists && snap.data().trips) || [];
+      renderMileage();
+    }, function (err) { console.error("mileage snapshot error", err); });
+  }
+  function saveMileageTrips(trips) {
+    return mileageRef().set({ trips: trips });
+  }
+
+  function tripMiles(t) {
+    return Math.max(0, (Number(t.endOdometer) || 0) - (Number(t.beginOdometer) || 0));
+  }
+  function tripAmount(t) {
+    return tripMiles(t) * 0.73;
+  }
+
+  function saveEmployeeInfo(field, value) {
+    var update = {};
+    update[field] = value;
+    db.collection("users").doc(currentUser.uid).update(update).then(function () {
+      currentProfile[field] = value; // keep the in-memory copy in sync
+    }).catch(function (err) { console.error("save employee info error", err); });
+  }
+
+  function resetTripForm() {
+    document.getElementById("tripBeginDate").value = "";
+    document.getElementById("tripEndDate").value = "";
+    document.getElementById("tripDescription").value = "";
+    document.getElementById("tripBeginOdo").value = "";
+    document.getElementById("tripEndOdo").value = "";
+    editingTripIndex = null;
+    document.getElementById("tripAddBtn").textContent = "Add Trip";
+  }
+
+  function doAddOrUpdateTrip() {
+    var trip = {
+      beginDate: document.getElementById("tripBeginDate").value,
+      endDate: document.getElementById("tripEndDate").value,
+      description: document.getElementById("tripDescription").value.trim(),
+      beginOdometer: document.getElementById("tripBeginOdo").value,
+      endOdometer: document.getElementById("tripEndOdo").value
+    };
+    if (!trip.beginDate || !trip.endDate || !trip.description || trip.beginOdometer === "" || trip.endOdometer === "") {
+      alert("Fill in all fields before adding the trip.");
+      return;
+    }
+    if (Number(trip.endOdometer) < Number(trip.beginOdometer)) {
+      alert("Ending odometer should be greater than or equal to the beginning odometer.");
+      return;
+    }
+    var trips = clone(mileageTrips);
+    if (editingTripIndex !== null) {
+      trips[editingTripIndex] = trip;
+    } else {
+      if (trips.length >= MILEAGE_MAX_ROWS) {
+        alert("This form only holds " + MILEAGE_MAX_ROWS + " trips. Export and clear the list before adding more.");
+        return;
+      }
+      trips.push(trip);
+    }
+    saveMileageTrips(trips);
+    resetTripForm();
+  }
+
+  function doEditTripStart(idx) {
+    var t = mileageTrips[idx];
+    if (!t) return;
+    document.getElementById("tripBeginDate").value = t.beginDate;
+    document.getElementById("tripEndDate").value = t.endDate;
+    document.getElementById("tripDescription").value = t.description;
+    document.getElementById("tripBeginOdo").value = t.beginOdometer;
+    document.getElementById("tripEndOdo").value = t.endOdometer;
+    editingTripIndex = idx;
+    document.getElementById("tripAddBtn").textContent = "Save Changes";
+    document.getElementById("tripBeginDate").scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function doDeleteTrip(idx) {
+    var trips = clone(mileageTrips);
+    trips.splice(idx, 1);
+    saveMileageTrips(trips);
+    if (editingTripIndex === idx) resetTripForm();
+  }
+
+  function doClearMileage() {
+    if (mileageTrips.length === 0) return;
+    if (!confirm("Clear all " + mileageTrips.length + " trip(s)? Do this after you've exported and submitted the form.")) return;
+    saveMileageTrips([]);
+    resetTripForm();
+  }
+
+  function doExportMileage() {
+    if (mileageTrips.length === 0) {
+      alert("Add at least one trip first.");
+      return;
+    }
+    exportMileageLog({
+      name: currentProfile.name,
+      employeeNumber: currentProfile.employeeNumber || "",
+      deptStore: currentProfile.deptStore || ""
+    }, mileageTrips);
+  }
+
+  function renderMileage() {
+    var listEl = document.getElementById("mileageList");
+    listEl.innerHTML = "";
+    var totalMiles = 0, totalAmount = 0;
+
+    if (mileageTrips.length === 0) {
+      listEl.innerHTML = '<li class="log-empty">No trips logged yet.</li>';
+    } else {
+      mileageTrips.forEach(function (t, idx) {
+        var miles = tripMiles(t);
+        var amount = tripAmount(t);
+        totalMiles += miles;
+        totalAmount += amount;
+
+        var li = document.createElement("li");
+        li.className = "mileage-trip-row";
+
+        var main = document.createElement("div");
+        main.className = "mileage-trip-main";
+        var descDiv = document.createElement("div");
+        descDiv.className = "trip-desc";
+        descDiv.textContent = t.description;
+        var metaDiv = document.createElement("div");
+        metaDiv.className = "trip-meta";
+        var dateRange = t.beginDate === t.endDate ? fmtHeaderDate(t.beginDate) : fmtHeaderDate(t.beginDate) + " \u2192 " + fmtHeaderDate(t.endDate);
+        metaDiv.textContent = dateRange + " \u2022 " + t.beginOdometer + " \u2192 " + t.endOdometer + " mi";
+        main.appendChild(descDiv);
+        main.appendChild(metaDiv);
+
+        var amountDiv = document.createElement("div");
+        amountDiv.className = "mileage-trip-amount";
+        amountDiv.textContent = miles + " mi \u2014 $" + amount.toFixed(2);
+
+        var editBtn = document.createElement("button");
+        editBtn.className = "edit-link";
+        editBtn.textContent = "edit";
+        editBtn.onclick = function () { doEditTripStart(idx); };
+
+        var delBtn = document.createElement("button");
+        delBtn.className = "del";
+        delBtn.title = "Delete this trip";
+        delBtn.textContent = "\u2715";
+        delBtn.onclick = function () { doDeleteTrip(idx); };
+
+        li.appendChild(main);
+        li.appendChild(amountDiv);
+        li.appendChild(editBtn);
+        li.appendChild(delBtn);
+        listEl.appendChild(li);
+      });
+    }
+
+    document.getElementById("mileageTotal").textContent = totalMiles + " mi \u2014 $" + totalAmount.toFixed(2);
   }
 
   // ---------- actions ----------
@@ -630,6 +796,15 @@
     document.getElementById("todoExportCsvBtn").onclick = function () {
       exportTodoListCsv(currentProfile.name, todoItems);
     };
+    document.getElementById("mileageEmpNum").addEventListener("change", function (e) {
+      saveEmployeeInfo("employeeNumber", e.target.value.trim());
+    });
+    document.getElementById("mileageDeptStore").addEventListener("change", function (e) {
+      saveEmployeeInfo("deptStore", e.target.value.trim());
+    });
+    document.getElementById("tripAddBtn").onclick = doAddOrUpdateTrip;
+    document.getElementById("mileageExportBtn").onclick = doExportMileage;
+    document.getElementById("mileageClearBtn").onclick = doClearMileage;
     document.getElementById("exportBtn").onclick = exportPdf;
     document.getElementById("exportCsvBtn").onclick = exportCsv;
     document.getElementById("backToToday").onclick = function () { switchToDate(todayStr); };
@@ -644,10 +819,13 @@
     document.getElementById("welcomeName").textContent = profile.name;
     document.getElementById("adminLink").style.display = profile.role === "admin" ? "inline" : "none";
     document.getElementById("headerDate").textContent = fmtHeaderDate(todayStr);
+    document.getElementById("mileageEmpNum").value = profile.employeeNumber || "";
+    document.getElementById("mileageDeptStore").value = profile.deptStore || "";
     subscribeToDay(todayStr);
     subscribeHistory();
     subscribeArchives();
     subscribeTodos();
+    subscribeMileage();
   }
 
   function showAuth() {
@@ -657,8 +835,10 @@
     if (unsubHistory) { unsubHistory(); unsubHistory = null; }
     if (unsubArchives) { unsubArchives(); unsubArchives = null; }
     if (unsubTodos) { unsubTodos(); unsubTodos = null; }
+    if (unsubMileage) { unsubMileage(); unsubMileage = null; }
     docCache = {};
     todoItems = [];
+    mileageTrips = [];
     document.getElementById("authScreen").style.display = "block";
     document.getElementById("appScreen").style.display = "none";
   }
