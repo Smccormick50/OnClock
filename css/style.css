@@ -370,3 +370,37 @@ header.top .links a, header.top .links button {
   .wrap.wide { max-width: 960px; }
   .clock-face { font-size: 52px; }
 }
+
+/* Mileage log form */
+.panel h3 {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin: 14px 0 8px;
+}
+.mileage-row { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.mileage-row > div { flex: 1; min-width: 130px; }
+.mileage-row .mileage-wide { flex: 1 1 100%; }
+.mileage-row label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: 4px;
+}
+.mileage-row input {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 16px; /* iOS: under 16px triggers auto-zoom on focus */
+}
+.mileage-trip-row { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; border-bottom: 1px dashed var(--line); }
+.mileage-trip-main { flex: 1; font-size: 14px; line-height: 1.5; }
+.mileage-trip-main .trip-desc { font-weight: 600; color: var(--ink); }
+.mileage-trip-main .trip-meta { color: var(--ink-soft); font-family: 'Space Mono', monospace; font-size: 12.5px; }
+.mileage-trip-amount { font-family: 'Space Mono', monospace; font-size: 14px; color: var(--pine); font-weight: 600; white-space: nowrap; padding-top: 2px; }
