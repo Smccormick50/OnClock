@@ -4,11 +4,17 @@
   var currentUser = null;
   var currentProfile = null;
   var selectedDate = localDateStr(new Date());
+  var yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  var pastSelectedDate = localDateStr(yesterday);
   var users = []; // {id, name, email, role}
   var entriesByUid = {}; // uid -> {sessions, notes}
+  var pastEntriesByUid = {};
   var openUid = null; // which employee row is expanded
+  var pastOpenUid = null;
   var unsubUsers = null;
   var unsubEntries = null;
+  var unsubPastEntries = null;
   var unsubArchives = null;
   var archiveDocs = [];
 
@@ -21,6 +27,8 @@
       users.sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
       render();
       populatePeriodEmployeeDropdown();
+      populatePastEmployeeDropdown();
+      renderPastDays();
     }, function (err) { console.error("users snapshot error", err); });
   }
 
@@ -41,6 +49,22 @@
     }
   }
 
+  function populatePastEmployeeDropdown() {
+    var select = document.getElementById("pastEmployee");
+    if (!select) return;
+    var previousValue = select.value;
+    select.innerHTML = '<option value="">All employees</option>';
+    users.forEach(function (user) {
+      var opt = document.createElement("option");
+      opt.value = user.id;
+      opt.textContent = user.name;
+      select.appendChild(opt);
+    });
+    if (previousValue && users.some(function (u) { return u.id === previousValue; })) {
+      select.value = previousValue;
+    }
+  }
+
   function subscribeEntriesForDate(dateStr) {
     if (unsubEntries) { unsubEntries(); unsubEntries = null; }
     entriesByUid = {};
@@ -55,6 +79,27 @@
   }
 
   function getEntry(uid) { return entriesByUid[uid] || emptyDay(); }
+
+  function subscribePastEntriesForDate(dateStr) {
+    if (unsubPastEntries) { unsubPastEntries(); unsubPastEntries = null; }
+    pastEntriesByUid = {};
+    pastOpenUid = null;
+    var listEl = document.getElementById("pastEmployeeList");
+    if (listEl) listEl.innerHTML = '<div class="log-empty">Loading…</div>';
+    unsubPastEntries = db.collection("entries").where("date", "==", dateStr).onSnapshot(function (snap) {
+      pastEntriesByUid = {};
+      snap.docs.forEach(function (d) {
+        var data = d.data();
+        pastEntriesByUid[data.uid] = { sessions: data.sessions || [], notes: data.notes || [], completedTodos: data.completedTodos || [] };
+      });
+      renderPastDays();
+    }, function (err) {
+      console.error("past entries snapshot error", err);
+      if (listEl) listEl.innerHTML = '<div class="log-empty">Something went wrong loading that date.</div>';
+    });
+  }
+
+  function getPastEntry(uid) { return pastEntriesByUid[uid] || emptyDay(); }
 
   // ---------- has this day already been archived? ----------
   // Used to warn admins that editing a day after it's been archived
@@ -82,11 +127,13 @@
   function switchTab(tab) {
     var panels = {
       today: document.getElementById("todayTab"),
+      pastdays: document.getElementById("pastDaysTab"),
       payperiod: document.getElementById("payPeriodTab"),
       archives: document.getElementById("archivesTab")
     };
     var buttons = {
       today: document.getElementById("tabTodayBtn"),
+      pastdays: document.getElementById("tabPastDaysBtn"),
       payperiod: document.getElementById("tabPayPeriodBtn"),
       archives: document.getElementById("tabArchivesBtn")
     };
@@ -94,6 +141,7 @@
       panels[key].style.display = key === tab ? "block" : "none";
       buttons[key].classList.toggle("active", key === tab);
     });
+    if (tab === "pastdays" && !unsubPastEntries) subscribePastEntriesForDate(pastSelectedDate);
     if (tab === "archives" && !unsubArchives) subscribeArchives();
   }
 
@@ -322,25 +370,86 @@
       var detail = document.createElement("div");
       detail.className = "detail-panel" + (openUid === user.id ? " open" : "");
       if (openUid === user.id) {
-        detail.appendChild(renderDetail(user, data));
+        detail.appendChild(renderDetail(user, data, false, selectedDate));
       }
       listEl.appendChild(detail);
     });
   }
 
-  function renderDetail(user, data) {
+  function renderPastDays() {
+    var listEl = document.getElementById("pastEmployeeList");
+    var employeeSelect = document.getElementById("pastEmployee");
+    if (!listEl || !employeeSelect) return;
+    listEl.innerHTML = "";
+
+    var selectedUid = employeeSelect.value;
+    var visibleUsers = selectedUid
+      ? users.filter(function (user) { return user.id === selectedUid; })
+      : users;
+
+    if (visibleUsers.length === 0) {
+      listEl.innerHTML = '<div class="log-empty">No employees found.</div>';
+      return;
+    }
+
+    visibleUsers.forEach(function (user) {
+      var data = getPastEntry(user.id);
+      var hasEntries = (data.sessions && data.sessions.length) || (data.notes && data.notes.length) || (data.completedTodos && data.completedTodos.length);
+      var row = document.createElement("div");
+      row.className = "employee-row";
+      row.onclick = function (e) {
+        if (e.target.closest("button")) return;
+        pastOpenUid = pastOpenUid === user.id ? null : user.id;
+        renderPastDays();
+      };
+
+      var left = document.createElement("div");
+      var nameLine = document.createElement("div");
+      nameLine.className = "ename";
+      nameLine.textContent = user.name;
+      var emailLine = document.createElement("div");
+      emailLine.className = "eemail";
+      emailLine.textContent = user.email || "";
+      left.appendChild(nameLine);
+      left.appendChild(emailLine);
+
+      var total = document.createElement("span");
+      total.className = "etotal";
+      total.textContent = hasEntries ? fmtDuration(totalMinutesFor(data)) : "No entries";
+
+      row.appendChild(left);
+      row.appendChild(total);
+      listEl.appendChild(row);
+
+      var detail = document.createElement("div");
+      detail.className = "detail-panel" + (pastOpenUid === user.id ? " open" : "");
+      if (pastOpenUid === user.id) {
+        detail.appendChild(renderDetail(user, data, true, pastSelectedDate));
+      }
+      listEl.appendChild(detail);
+    });
+  }
+
+  function renderDetail(user, data, readOnly, dateStr) {
     var container = document.createElement("div");
 
-    var archivedNote = document.createElement("div");
-    archivedNote.className = "archived-note";
-    archivedNote.style.display = "none";
-    container.appendChild(archivedNote);
-    checkArchived(user.id, selectedDate, function (isArchived) {
-      if (isArchived) {
-        archivedNote.style.display = "block";
-        archivedNote.textContent = "This day was already archived. Changes made here won't update the saved PDF — re-run \"Archive daily logs\" for " + selectedDate + " from the GitHub Actions tab (with that date entered) to refresh it.";
-      }
-    });
+    if (readOnly) {
+      var readOnlyNote = document.createElement("div");
+      readOnlyNote.className = "read-only-note";
+      readOnlyNote.textContent = "Read only — this past log cannot be edited or deleted from Admin.";
+      container.appendChild(readOnlyNote);
+    } else {
+      var archivedNote = document.createElement("div");
+      archivedNote.className = "archived-note";
+      archivedNote.style.display = "none";
+      container.appendChild(archivedNote);
+      checkArchived(user.id, dateStr, function (isArchived) {
+        if (isArchived) {
+          archivedNote.style.display = "block";
+          archivedNote.textContent = "This day was already archived. Changes made here won't update the saved PDF — re-run \"Archive daily logs\" for " + dateStr + " from the GitHub Actions tab (with that date entered) to refresh it.";
+        }
+      });
+    }
 
     var rows = [];
     (data.sessions || []).forEach(function (s, idx) {
@@ -375,7 +484,7 @@
           bodyDiv.classList.add("session-in");
           bodyDiv.textContent = "Clocked in";
           li.appendChild(bodyDiv);
-          li.appendChild(makeSessionEditControls(user, r.idx, "clockIn"));
+          if (!readOnly) li.appendChild(makeSessionEditControls(user, r.idx, "clockIn"));
         } else if (r.type === "out") {
           bodyDiv.classList.add("session-out");
           bodyDiv.textContent = "Clocked out";
@@ -386,16 +495,16 @@
             bodyDiv.appendChild(dur);
           }
           li.appendChild(bodyDiv);
-          li.appendChild(makeSessionEditControls(user, r.idx, "clockOut"));
+          if (!readOnly) li.appendChild(makeSessionEditControls(user, r.idx, "clockOut"));
         } else if (r.type === "todo") {
           bodyDiv.classList.add("todo-done");
           bodyDiv.textContent = "\u2713 " + r.text;
           li.appendChild(bodyDiv);
-          li.appendChild(makeTodoEditControls(user, r.idx, r.text, r.t));
+          if (!readOnly) li.appendChild(makeTodoEditControls(user, r.idx, r.text, r.t));
         } else {
           bodyDiv.textContent = r.text;
           li.appendChild(bodyDiv);
-          li.appendChild(makeNoteEditControls(user, r.idx, r.text, r.t));
+          if (!readOnly) li.appendChild(makeNoteEditControls(user, r.idx, r.text, r.t));
         }
         list.appendChild(li);
       });
@@ -407,11 +516,11 @@
     var exportBtn = document.createElement("button");
     exportBtn.className = "btn secondary";
     exportBtn.textContent = "Export " + user.name + "'s day as PDF";
-    exportBtn.onclick = function () { exportDayPdf(user.name, selectedDate, getEntry(user.id)); };
+    exportBtn.onclick = function () { exportDayPdf(user.name, dateStr, data); };
     var exportCsvBtn = document.createElement("button");
     exportCsvBtn.className = "btn secondary";
     exportCsvBtn.textContent = "Export as CSV";
-    exportCsvBtn.onclick = function () { exportDayCsv(user.name, selectedDate, getEntry(user.id)); };
+    exportCsvBtn.onclick = function () { exportDayCsv(user.name, dateStr, data); };
     exportRow.appendChild(exportBtn);
     exportRow.appendChild(exportCsvBtn);
     container.appendChild(exportRow);
@@ -584,21 +693,28 @@
   }
 
   function wireHandlers() {
-    var datePicker = document.getElementById("datePicker");
-    datePicker.value = selectedDate;
-    datePicker.onchange = function () {
-      selectedDate = datePicker.value;
-      openUid = null;
-      subscribeEntriesForDate(selectedDate);
+    document.getElementById("todayDateLabel").textContent = fmtHeaderDate(selectedDate);
+
+    var pastDatePicker = document.getElementById("pastDatePicker");
+    pastDatePicker.value = pastSelectedDate;
+    pastDatePicker.max = pastSelectedDate;
+    pastDatePicker.onchange = function () {
+      if (!pastDatePicker.value) return;
+      if (pastDatePicker.value >= localDateStr(new Date())) {
+        alert("Choose a date before today. Today's logs are on the Today tab.");
+        pastDatePicker.value = pastSelectedDate;
+        return;
+      }
+      pastSelectedDate = pastDatePicker.value;
+      subscribePastEntriesForDate(pastSelectedDate);
     };
-    document.getElementById("todayBtn").onclick = function () {
-      selectedDate = localDateStr(new Date());
-      datePicker.value = selectedDate;
-      openUid = null;
-      subscribeEntriesForDate(selectedDate);
+    document.getElementById("pastEmployee").onchange = function () {
+      pastOpenUid = null;
+      renderPastDays();
     };
     document.getElementById("signOutBtn").onclick = function () { signOutUser(); };
     document.getElementById("tabTodayBtn").onclick = function () { switchTab("today"); };
+    document.getElementById("tabPastDaysBtn").onclick = function () { switchTab("pastdays"); };
     document.getElementById("tabPayPeriodBtn").onclick = function () { switchTab("payperiod"); };
     document.getElementById("tabArchivesBtn").onclick = function () { switchTab("archives"); };
 
