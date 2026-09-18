@@ -180,7 +180,12 @@
     return mileageRef().set({ trips: trips });
   }
 
+  function tripIsComplete(t) {
+    return t && t.endOdometer !== "" && t.endOdometer !== null && typeof t.endOdometer !== "undefined";
+  }
+
   function tripMiles(t) {
+    if (!tripIsComplete(t)) return 0;
     return Math.max(0, (Number(t.endOdometer) || 0) - (Number(t.beginOdometer) || 0));
   }
   function tripAmount(t) {
@@ -196,13 +201,13 @@
   }
 
   function resetTripForm() {
-    document.getElementById("tripBeginDate").value = "";
+    document.getElementById("tripBeginDate").value = todayStr;
     document.getElementById("tripEndDate").value = "";
     document.getElementById("tripDescription").value = "";
     document.getElementById("tripBeginOdo").value = "";
     document.getElementById("tripEndOdo").value = "";
     editingTripIndex = null;
-    document.getElementById("tripAddBtn").textContent = "Add Trip";
+    document.getElementById("tripAddBtn").textContent = "Save Mileage";
   }
 
   function doAddOrUpdateTrip() {
@@ -213,11 +218,18 @@
       beginOdometer: document.getElementById("tripBeginOdo").value,
       endOdometer: document.getElementById("tripEndOdo").value
     };
-    if (!trip.beginDate || !trip.endDate || !trip.description || trip.beginOdometer === "" || trip.endOdometer === "") {
-      alert("Fill in all fields before adding the trip.");
+    if (!trip.beginDate || !trip.description || trip.beginOdometer === "") {
+      alert("Enter the start date, location, and starting mileage before saving.");
       return;
     }
-    if (Number(trip.endOdometer) < Number(trip.beginOdometer)) {
+    if (!Number.isFinite(Number(trip.beginOdometer)) || Number(trip.beginOdometer) < 0) {
+      alert("Enter a valid starting mileage.");
+      return;
+    }
+    // A same-day trip does not need a separate ending date. Most importantly,
+    // ending mileage can stay blank until the employee finishes the day.
+    trip.endDate = trip.endDate || trip.beginDate;
+    if (tripIsComplete(trip) && (!Number.isFinite(Number(trip.endOdometer)) || Number(trip.endOdometer) < Number(trip.beginOdometer))) {
       alert("Ending odometer should be greater than or equal to the beginning odometer.");
       return;
     }
@@ -239,12 +251,13 @@
     var t = mileageTrips[idx];
     if (!t) return;
     document.getElementById("tripBeginDate").value = t.beginDate;
-    document.getElementById("tripEndDate").value = t.endDate;
+    document.getElementById("tripEndDate").value = t.endDate || t.beginDate || "";
     document.getElementById("tripDescription").value = t.description;
     document.getElementById("tripBeginOdo").value = t.beginOdometer;
-    document.getElementById("tripEndOdo").value = t.endOdometer;
+    document.getElementById("tripEndOdo").value = tripIsComplete(t) ? t.endOdometer : "";
     editingTripIndex = idx;
-    document.getElementById("tripAddBtn").textContent = "Save Changes";
+    document.getElementById("tripAddBtn").textContent = tripIsComplete(t) ? "Save Changes" : "Finish & Save";
+    if (!tripIsComplete(t)) document.getElementById("tripEndOdo").focus();
     document.getElementById("tripBeginDate").scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
@@ -257,21 +270,31 @@
 
   function doClearMileage() {
     if (mileageTrips.length === 0) return;
-    if (!confirm("Clear all " + mileageTrips.length + " trip(s)? Do this after you've exported and submitted the form.")) return;
-    saveMileageTrips([]);
+    var completedCount = mileageTrips.filter(tripIsComplete).length;
+    if (completedCount === 0) {
+      alert("There are no completed trips to clear. Your in-progress trip is still saved.");
+      return;
+    }
+    if (!confirm("Clear " + completedCount + " completed trip(s)? Any in-progress trip will stay saved.")) return;
+    saveMileageTrips(mileageTrips.filter(function (t) { return !tripIsComplete(t); }));
     resetTripForm();
   }
 
   function doExportMileage() {
-    if (mileageTrips.length === 0) {
-      alert("Add at least one trip first.");
+    var completedTrips = mileageTrips.filter(tripIsComplete);
+    var inProgressCount = mileageTrips.length - completedTrips.length;
+    if (completedTrips.length === 0) {
+      alert("Finish at least one trip by entering its ending mileage before exporting.");
       return;
+    }
+    if (inProgressCount > 0) {
+      alert(inProgressCount + " in-progress trip(s) will stay saved and will not be included in this export.");
     }
     exportMileageLog({
       name: currentProfile.name,
       employeeNumber: currentProfile.employeeNumber || "",
       deptStore: currentProfile.deptStore || ""
-    }, mileageTrips);
+    }, completedTrips);
   }
 
   function renderMileage() {
@@ -283,6 +306,7 @@
       listEl.innerHTML = '<li class="log-empty">No trips logged yet.</li>';
     } else {
       mileageTrips.forEach(function (t, idx) {
+        var isComplete = tripIsComplete(t);
         var miles = tripMiles(t);
         var amount = tripAmount(t);
         totalMiles += miles;
@@ -290,6 +314,7 @@
 
         var li = document.createElement("li");
         li.className = "mileage-trip-row";
+        if (!isComplete) li.className += " in-progress";
 
         var main = document.createElement("div");
         main.className = "mileage-trip-main";
@@ -298,18 +323,21 @@
         descDiv.textContent = t.description;
         var metaDiv = document.createElement("div");
         metaDiv.className = "trip-meta";
-        var dateRange = t.beginDate === t.endDate ? fmtHeaderDate(t.beginDate) : fmtHeaderDate(t.beginDate) + " \u2192 " + fmtHeaderDate(t.endDate);
-        metaDiv.textContent = dateRange + " \u2022 " + t.beginOdometer + " \u2192 " + t.endOdometer + " mi";
+        var dateRange = !t.endDate || t.beginDate === t.endDate ? fmtHeaderDate(t.beginDate) : fmtHeaderDate(t.beginDate) + " \u2192 " + fmtHeaderDate(t.endDate);
+        metaDiv.textContent = isComplete
+          ? dateRange + " \u2022 " + t.beginOdometer + " \u2192 " + t.endOdometer + " mi"
+          : dateRange + " \u2022 Starting: " + t.beginOdometer + " mi";
         main.appendChild(descDiv);
         main.appendChild(metaDiv);
 
         var amountDiv = document.createElement("div");
         amountDiv.className = "mileage-trip-amount";
-        amountDiv.textContent = miles + " mi \u2014 $" + amount.toFixed(2);
+        amountDiv.textContent = isComplete ? miles + " mi \u2014 $" + amount.toFixed(2) : "In progress";
+        if (!isComplete) amountDiv.className += " is-pending";
 
         var editBtn = document.createElement("button");
         editBtn.className = "edit-link";
-        editBtn.textContent = "edit";
+        editBtn.textContent = isComplete ? "edit" : "finish";
         editBtn.onclick = function () { doEditTripStart(idx); };
 
         var delBtn = document.createElement("button");
@@ -802,9 +830,15 @@
     document.getElementById("mileageDeptStore").addEventListener("change", function (e) {
       saveEmployeeInfo("deptStore", e.target.value.trim());
     });
+    var endDateInput = document.getElementById("tripEndDate");
+    var endOdoInput = document.getElementById("tripEndOdo");
+    endDateInput.removeAttribute("required");
+    endOdoInput.removeAttribute("required");
+    endOdoInput.placeholder = "Enter at end of day";
     document.getElementById("tripAddBtn").onclick = doAddOrUpdateTrip;
     document.getElementById("mileageExportBtn").onclick = doExportMileage;
     document.getElementById("mileageClearBtn").onclick = doClearMileage;
+    document.getElementById("mileageClearBtn").textContent = "Clear Completed";
     document.getElementById("exportBtn").onclick = exportPdf;
     document.getElementById("exportCsvBtn").onclick = exportCsv;
     document.getElementById("backToToday").onclick = function () { switchToDate(todayStr); };
@@ -821,6 +855,7 @@
     document.getElementById("headerDate").textContent = fmtHeaderDate(todayStr);
     document.getElementById("mileageEmpNum").value = profile.employeeNumber || "";
     document.getElementById("mileageDeptStore").value = profile.deptStore || "";
+    resetTripForm();
     subscribeToDay(todayStr);
     subscribeHistory();
     subscribeArchives();

@@ -56,6 +56,13 @@ function setCellValue(xml, ref, type, value) {
 // trips: [{ beginDate, endDate (YYYY-MM-DD), description, beginOdometer, endOdometer }]
 // profile: { name, employeeNumber, deptStore }
 async function exportMileageLog(profile, trips) {
+  trips = (trips || []).filter(function (t) {
+    return t && t.endOdometer !== "" && t.endOdometer !== null && typeof t.endOdometer !== "undefined";
+  });
+  if (trips.length === 0) {
+    alert("Finish at least one trip by entering its ending mileage before exporting.");
+    return;
+  }
   if (typeof JSZip === "undefined") {
     alert("The spreadsheet library didn't load — check your connection and try again.");
     return;
