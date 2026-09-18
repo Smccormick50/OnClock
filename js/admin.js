@@ -229,13 +229,13 @@
     data.notes.splice(idx, 1);
     saveEntry(user.id, user.name, selectedDate, data);
   }
-  function doEditNote(user, idx, newText) {
-    newText = newText.trim();
-    if (!newText) return;
+  function doEditNote(user, idx, newText, timeVal) {
     var data = clone(getEntry(user.id));
     var note = data.notes[idx];
     if (!note) return;
-    note.text = newText;
+    newText = newText.trim();
+    if (newText) note.text = newText;
+    if (timeVal) note.time = fromTimeInputValue(selectedDate, timeVal);
     saveEntry(user.id, user.name, selectedDate, data);
   }
   function doDeleteCompletedTodo(user, idx) {
@@ -393,7 +393,7 @@
         } else {
           bodyDiv.textContent = r.text;
           li.appendChild(bodyDiv);
-          li.appendChild(makeNoteEditControls(user, r.idx, r.text));
+          li.appendChild(makeNoteEditControls(user, r.idx, r.text, r.t));
         }
         list.appendChild(li);
       });
@@ -441,9 +441,13 @@
       input.value = currentIso ? new Date(currentIso).toTimeString().slice(0, 5) : "";
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
-      saveBtn.onclick = function () { doEditSession(user, idx, field, input.value); };
-      var row = wrap.parentElement;
       var box = document.createElement("div");
+      saveBtn.onclick = function () {
+        doEditSession(user, idx, field, input.value);
+        box.remove();
+        editLink.disabled = false;
+      };
+      var row = wrap.parentElement;
       box.className = "edit-inline";
       box.appendChild(input);
       box.appendChild(saveBtn);
@@ -456,7 +460,7 @@
     return wrap;
   }
 
-  function makeNoteEditControls(user, idx, currentText) {
+  function makeNoteEditControls(user, idx, currentText, currentTimeIso) {
     var wrap = document.createElement("div");
     wrap.style.display = "flex";
     wrap.style.alignItems = "center";
@@ -476,7 +480,7 @@
       input.type = "text";
       input.value = currentText;
       input.style.flex = "1";
-      input.style.minWidth = "160px";
+      input.style.minWidth = "140px";
       input.style.fontFamily = "'Source Sans 3', sans-serif";
       input.style.fontSize = "16px";
       input.style.padding = "3px 6px";
@@ -484,17 +488,27 @@
       input.style.borderRadius = "4px";
       input.style.background = "var(--paper)";
       input.style.color = "var(--ink)";
+
+      var timeInput = document.createElement("input");
+      timeInput.type = "time";
+      timeInput.value = currentTimeIso ? new Date(currentTimeIso).toTimeString().slice(0, 5) : "";
+
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
-      saveBtn.onclick = function () { doEditNote(user, idx, input.value); };
+      var box = document.createElement("div");
+      saveBtn.onclick = function () {
+        doEditNote(user, idx, input.value, timeInput.value);
+        box.remove();
+        editLink.disabled = false;
+      };
       input.addEventListener("keydown", function (e) {
         if (e.key === "Enter") saveBtn.click();
       });
       var row = wrap.parentElement;
-      var box = document.createElement("div");
       box.className = "edit-inline";
       box.style.flex = "1";
       box.appendChild(input);
+      box.appendChild(timeInput);
       box.appendChild(saveBtn);
       row.appendChild(box);
       editLink.disabled = true;
@@ -542,13 +556,17 @@
 
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
-      saveBtn.onclick = function () { doEditCompletedTodo(user, idx, textInput.value, timeInput.value); };
+      var box = document.createElement("div");
+      saveBtn.onclick = function () {
+        doEditCompletedTodo(user, idx, textInput.value, timeInput.value);
+        box.remove();
+        editLink.disabled = false;
+      };
       textInput.addEventListener("keydown", function (e) {
         if (e.key === "Enter") saveBtn.click();
       });
 
       var row = wrap.parentElement;
-      var box = document.createElement("div");
       box.className = "edit-inline";
       box.style.flex = "1";
       box.appendChild(textInput);
