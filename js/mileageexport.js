@@ -13,6 +13,13 @@ var MILEAGE_TEMPLATE_URL = "assets/mileage-template.xlsx";
 var MILEAGE_FIRST_ROW = 17;
 var MILEAGE_MAX_ROWS = 37; // rows 17–53 in the template
 
+function mileageNameLastFirst(fullName) {
+  var parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return parts.join(" ");
+  var lastName = parts.pop();
+  return lastName + " " + parts.join(" ");
+}
+
 function xmlEscape(s) {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -81,7 +88,7 @@ async function exportMileageLog(profile, trips) {
   var zip = await JSZip.loadAsync(buf);
   var xml = await zip.file("xl/worksheets/sheet1.xml").async("string");
 
-  xml = setCellValue(xml, "M5", "text", profile.name || "");
+  xml = setCellValue(xml, "M5", "text", mileageNameLastFirst(profile.name));
   xml = setCellValue(xml, "I8", "text", profile.employeeNumber || "");
   xml = setCellValue(xml, "P8", "number", Number(profile.deptStore) || 0);
 
@@ -207,7 +214,7 @@ async function exportMileagePdf(profile, trips) {
   doc.line(353, 67, right, 67);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
-  doc.text(profile.name || "", 470, 62, { align: "center" });
+  doc.text(mileageNameLastFirst(profile.name), 470, 62, { align: "center" });
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5);
