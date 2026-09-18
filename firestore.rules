@@ -70,5 +70,15 @@ service cloud.firestore {
     match /todos/{uid} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
+
+    // Each employee's pending mileage log — one doc per user, holding
+    // trips not yet exported/submitted for reimbursement. Owner-only,
+    // same reasoning as todos: this is a personal working list before
+    // submission, not an official record admins need to see here (the
+    // actual reimbursement form is the exported Excel file itself,
+    // handed to accounting outside the app).
+    match /mileage/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
   }
 }
