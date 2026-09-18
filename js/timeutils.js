@@ -41,9 +41,14 @@ function totalMinutesFor(data) {
 }
 function currentOpenSession(data) {
   if (!data.sessions || data.sessions.length === 0) return null;
-  var last = data.sessions[data.sessions.length - 1];
-  return last.clockOut ? null : last;
+  // Scans all sessions, not just the last one — a backfilled punch
+  // (added out of chronological order) could otherwise hide a
+  // genuinely still-open session sitting earlier in the array.
+  for (var i = data.sessions.length - 1; i >= 0; i--) {
+    if (!data.sessions[i].clockOut) return data.sessions[i];
+  }
+  return null;
 }
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
-function emptyDay() { return { sessions: [], notes: [] }; }
+function emptyDay() { return { sessions: [], notes: [], completedTodos: [] }; }
 function entryId(uid, dateStr) { return uid + "_" + dateStr; }

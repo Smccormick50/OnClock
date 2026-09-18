@@ -424,6 +424,35 @@
     saveDay(dateStr, data);
   }
 
+  function doAddPunch() {
+    var inVal = document.getElementById("punchInTime").value;
+    var outVal = document.getElementById("punchOutTime").value;
+    if (!inVal) {
+      alert("Enter at least a clock-in time.");
+      return;
+    }
+    var data = clone(getDayData(viewedDate));
+    var isToday = viewedDate === todayStr;
+    if (!outVal && !isToday) {
+      alert("A clock-out time is required for a past day — only today can be left open.");
+      return;
+    }
+    if (!outVal && currentOpenSession(data)) {
+      alert("You're already clocked in today. Add a clock-out time here, or use the Clock Out button above.");
+      return;
+    }
+    var clockIn = fromTimeInputValue(viewedDate, inVal);
+    var clockOut = outVal ? fromTimeInputValue(viewedDate, outVal) : null;
+    if (clockOut && new Date(clockOut) < new Date(clockIn)) {
+      alert("Clock-out time should be after the clock-in time.");
+      return;
+    }
+    data.sessions.push({ clockIn: clockIn, clockOut: clockOut });
+    saveDay(viewedDate, data);
+    document.getElementById("punchInTime").value = "";
+    document.getElementById("punchOutTime").value = "";
+  }
+
   function setBtnBusy(busy) { document.getElementById("punchBtn").disabled = busy; }
 
   // ---------- rendering ----------
@@ -457,6 +486,11 @@
     document.getElementById("logTitle").textContent = viewedDate === todayStr ? "Today's log" : fmtHeaderDate(viewedDate) + " log";
     document.getElementById("totalTime").textContent = fmtDuration(totalMinutesFor(data));
     updatePunchButton();
+
+    var punchOutLabel = document.querySelector('label[for="punchOutTime"]');
+    if (punchOutLabel) {
+      punchOutLabel.textContent = viewedDate === todayStr ? "Clock out (optional for today)" : "Clock out (required for past days)";
+    }
 
     var banner = document.getElementById("viewingBanner");
     if (viewedDate !== todayStr) {
@@ -870,6 +904,7 @@
     document.getElementById("mileageClearBtn").textContent = "Clear Completed";
     document.getElementById("exportBtn").onclick = exportPdf;
     document.getElementById("exportCsvBtn").onclick = exportCsv;
+    document.getElementById("punchAddBtn").onclick = doAddPunch;
     document.getElementById("backToToday").onclick = function () { switchToDate(todayStr); };
     document.getElementById("signOutBtn").onclick = function () { signOutUser(); };
   }
