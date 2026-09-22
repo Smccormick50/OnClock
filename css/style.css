@@ -357,6 +357,181 @@ header.top .links a, header.top .links button {
 }
 .tab-btn.active { color: var(--pine); border-bottom-color: var(--paper-raised); background: var(--paper-raised); box-shadow: 0 -2px 0 var(--pine) inset; }
 
+/* Admin archive browser */
+.archive-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.archive-heading-row h2 { margin: 0; }
+.archive-live-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #18794e;
+  color: #fff3b0;
+  padding: 2px 8px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.archive-intro {
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.35;
+  margin: 0 0 16px;
+}
+.archive-filter-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--pine-tint);
+  margin-bottom: 14px;
+  padding: 10px 12px;
+}
+.archive-filter-row label {
+  color: var(--pine);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+}
+.archive-filter-row select {
+  min-width: 210px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 16px;
+}
+.archive-filter-summary {
+  color: var(--ink-soft);
+  font-size: 13px;
+  margin-left: auto;
+}
+.archive-empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--ink-soft);
+  font-style: italic;
+  padding: 18px;
+  text-align: center;
+}
+.archive-month {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f4f5f1;
+  margin: 0 0 10px;
+  overflow: hidden;
+}
+.archive-month-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  color: var(--pine);
+  list-style: none;
+  user-select: none;
+}
+.archive-month-summary::-webkit-details-marker { display: none; }
+.archive-month-summary::before {
+  content: "▶";
+  flex: 0 0 auto;
+  font-size: 13px;
+  transition: transform 0.15s ease;
+}
+.archive-month[open] > .archive-month-summary::before { transform: rotate(90deg); }
+.archive-month-title {
+  flex: 1;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+}
+.archive-month-stats {
+  color: var(--ink-soft);
+  font-size: 14px;
+  white-space: nowrap;
+}
+.archive-month-content {
+  border-top: 1px solid var(--line);
+  background: var(--paper-raised);
+  padding: 12px 14px 14px;
+}
+.archive-month-tools { margin-bottom: 9px; }
+.archive-month-download {
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.archive-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.archive-table {
+  width: 100%;
+  min-width: 730px;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.archive-table th {
+  background: var(--pine);
+  color: var(--brass-light);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  padding: 9px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+.archive-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 9px 10px;
+  vertical-align: middle;
+}
+.archive-date-cell { font-weight: 600; white-space: nowrap; }
+.archive-total-cell {
+  font-family: 'Space Mono', monospace;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.archive-actions { display: flex; gap: 5px; white-space: nowrap; }
+.archive-action {
+  border: 1px solid var(--pine);
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 10px;
+}
+.archive-action.primary { background: var(--brass-light); color: var(--pine-dark); border-color: var(--brass-light); }
+.archive-action.secondary { background: var(--pine); color: var(--paper-raised); }
+.archive-detail-row[hidden] { display: none; }
+.archive-detail-row td { background: var(--pine-tint); padding: 0; }
+.archive-day-detail { padding: 12px 16px 14px; }
+.archive-day-detail-title {
+  color: var(--pine);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.archive-timeline-row {
+  display: grid;
+  grid-template-columns: 90px 105px minmax(0, 1fr);
+  gap: 10px;
+  border-top: 1px dashed var(--line);
+  padding: 7px 0;
+}
+.archive-timeline-time { color: var(--ink-soft); font-family: 'Space Mono', monospace; font-size: 12px; }
+.archive-timeline-type { font-weight: 600; }
+.archive-timeline-detail { min-width: 0; overflow-wrap: anywhere; }
+.archive-day-empty { color: var(--ink-soft); font-style: italic; padding-top: 4px; }
+
 /* Hover feedback — only for devices with a real pointer, so touch
    screens don't get a "stuck" hover state after tapping. */
 @media (hover: hover) and (pointer: fine) {
@@ -365,11 +540,22 @@ header.top .links a, header.top .links button {
   .tab-btn:not(.active):hover { color: var(--pine); background: var(--pine-tint); }
   .employee-row:hover { background: var(--pine-tint); }
   .history-row:hover, .log-row:hover { background: var(--pine-tint); }
+  .archive-month-summary:hover { background: var(--pine-tint); }
+  .archive-table tbody tr:not(.archive-detail-row):hover { background: var(--pine-tint); }
+  .archive-action:hover { filter: brightness(1.08); }
 }
 
 @media (max-width: 420px) {
   .clock-face { font-size: 36px; }
   header.top h1 { font-size: 25px; }
+  .archive-month-summary { align-items: flex-start; padding: 11px 12px; }
+  .archive-month-stats { font-size: 12px; }
+  .archive-month-content { padding: 10px; }
+  .archive-timeline-row { grid-template-columns: 74px 90px minmax(0, 1fr); gap: 6px; }
+  .archive-filter-row { align-items: stretch; }
+  .archive-filter-row label { width: 100%; }
+  .archive-filter-row select { min-width: 0; width: 100%; }
+  .archive-filter-summary { margin-left: 0; width: 100%; }
 }
 
 /* Desktop: a bit more breathing room than the mobile-first column
