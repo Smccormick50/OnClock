@@ -86,48 +86,8 @@ function shiftDateStr(dateStr, deltaDays) {
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
 }
 
-async function main() {
-  const now = new Date();
-  const isManualRun = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
-
-  // GitHub Actions does not guarantee scheduled workflows fire at the
-  // requested time — in practice, runs on this repo have landed 5-7
-  // hours late (11:59pm CDT scheduled, but actually executing around
-  // 5am). Trying to detect "is it currently near midnight" and skip
-  // otherwise meant the script almost always skipped, since by the
-  // time it actually ran, it was already well into the next morning —
-  // so nothing ever got archived, despite the workflow showing green.
-  //
-  // So a scheduled run no longer checks the clock at all. It simply
-  // always archives "yesterday" (Chicago calendar date, relative to
-  // whenever this happens to execute). That's correct no matter how
-  // late the run lands: even six hours late, the day that ended at
-  // midnight is still "yesterday". This is also fully idempotent
-  // (same Firestore doc ID, full overwrite each time), so if both
-  // scheduled cron entries fire on the same day, or a run repeats,
-  // it just re-saves the same result — harmless either way.
-  let dateStr;
-  if (isManualRun) {
-    const requestedDate = (process.env.ARCHIVE_DATE || "").trim();
-    if (requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
-      dateStr = requestedDate;
-    } else {
-      if (requestedDate) console.warn(`"${requestedDate}" isn't a valid YYYY-MM-DD date — archiving today instead.`);
-      dateStr = tzDateStr(now, TIME_ZONE);
-    }
-  } else {
-    dateStr = shiftDateStr(tzDateStr(now, TIME_ZONE), -1);
-  }
-
-  console.log(`Running at ${tzHour(now, TIME_ZONE)}:xx ${TIME_ZONE} (isManualRun=${isManualRun}), targeting ${dateStr}.`);
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
-  if (!serviceAccountJson) {
-    throw new Error("FIREBASE_SERVICE_ACCOUNT secret is not set.");
-  }
-  const serviceAccount = JSON.parse(serviceAccountJson);
-  admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-  const db = admin.firestore();
-
+// Archives one date. Returns { archived, autoClocked } counts.
+async function archiveOneDate(db, dateStr) {
   const snap = await db.collection("entries").where("date", "==", dateStr).get();
 
   let archived = 0;
@@ -165,7 +125,85 @@ async function main() {
     archived++;
   }
 
-  console.log(`Archived ${archived} log(s) for ${dateStr}. Auto-clocked-out ${autoClocked} still-open session(s).`);
+  console.log(`  ${dateStr}: archived ${archived} log(s), auto-clocked-out ${autoClocked} still-open session(s).`);
+  return { archived, autoClocked };
+}
+
+// Builds the inclusive list of YYYY-MM-DD dates from start to end.
+// Capped at 90 days as a sanity check against a typo'd date sending
+// this off into a years-long loop.
+function dateRange(startStr, endStr) {
+  const dates = [];
+  let cursor = startStr;
+  let guard = 0;
+  while (cursor <= endStr && guard < 90) {
+    dates.push(cursor);
+    cursor = shiftDateStr(cursor, 1);
+    guard++;
+  }
+  return dates;
+}
+
+async function main() {
+  const now = new Date();
+  const isManualRun = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
+
+  // GitHub Actions does not guarantee scheduled workflows fire at the
+  // requested time — in practice, runs on this repo have landed 5-7
+  // hours late (11:59pm CDT scheduled, but actually executing around
+  // 5am). Trying to detect "is it currently near midnight" and skip
+  // otherwise meant the script almost always skipped, since by the
+  // time it actually ran, it was already well into the next morning —
+  // so nothing ever got archived, despite the workflow showing green.
+  //
+  // So a scheduled run no longer checks the clock at all. It simply
+  // always archives "yesterday" (Chicago calendar date, relative to
+  // whenever this happens to execute). That's correct no matter how
+  // late the run lands: even six hours late, the day that ended at
+  // midnight is still "yesterday". This is also fully idempotent
+  // (same Firestore doc ID, full overwrite each time), so if both
+  // scheduled cron entries fire on the same day, or a run repeats,
+  // it just re-saves the same result — harmless either way.
+  let dates;
+  if (isManualRun) {
+    const requestedDate = (process.env.ARCHIVE_DATE || "").trim();
+    const requestedEndDate = (process.env.ARCHIVE_END_DATE || "").trim();
+    const validDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate);
+    const validEndDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedEndDate);
+
+    if (validDate && validEndDate) {
+      if (requestedEndDate < requestedDate) {
+        throw new Error(`End date (${requestedEndDate}) is before start date (${requestedDate}).`);
+      }
+      dates = dateRange(requestedDate, requestedEndDate);
+    } else if (validDate) {
+      dates = [requestedDate];
+    } else {
+      if (requestedDate) console.warn(`"${requestedDate}" isn't a valid YYYY-MM-DD date — archiving today instead.`);
+      dates = [tzDateStr(now, TIME_ZONE)];
+    }
+  } else {
+    dates = [shiftDateStr(tzDateStr(now, TIME_ZONE), -1)];
+  }
+
+  console.log(`Running at ${tzHour(now, TIME_ZONE)}:xx ${TIME_ZONE} (isManualRun=${isManualRun}), targeting: ${dates.join(", ")}.`);
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!serviceAccountJson) {
+    throw new Error("FIREBASE_SERVICE_ACCOUNT secret is not set.");
+  }
+  const serviceAccount = JSON.parse(serviceAccountJson);
+  admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  const db = admin.firestore();
+
+  let totalArchived = 0;
+  let totalAutoClocked = 0;
+  for (const dateStr of dates) {
+    const result = await archiveOneDate(db, dateStr);
+    totalArchived += result.archived;
+    totalAutoClocked += result.autoClocked;
+  }
+
+  console.log(`Done. ${totalArchived} log(s) archived across ${dates.length} day(s), ${totalAutoClocked} auto-clocked-out.`);
 }
 
 main().catch((err) => {
