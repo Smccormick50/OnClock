@@ -810,6 +810,7 @@
     subscribeToDay(dateStr);
     renderViewed();
     renderHistoryList(lastHistoryEntries);
+    switchAppTab("log");
     document.getElementById("logTitle").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -866,7 +867,27 @@
     }, function (err) { console.error("archives snapshot error", err); });
   }
 
+  function switchAppTab(tab) {
+    var panels = {
+      log: document.getElementById("logTab"),
+      mileage: document.getElementById("mileageTab"),
+      pastdays: document.getElementById("pastDaysTab")
+    };
+    var buttons = {
+      log: document.getElementById("tabLogBtn"),
+      mileage: document.getElementById("tabMileageBtn"),
+      pastdays: document.getElementById("tabPastDaysBtn")
+    };
+    Object.keys(panels).forEach(function (key) {
+      panels[key].style.display = key === tab ? "block" : "none";
+      buttons[key].classList.toggle("active", key === tab);
+    });
+  }
+
   function wireHandlers() {
+    document.getElementById("tabLogBtn").onclick = function () { switchAppTab("log"); };
+    document.getElementById("tabMileageBtn").onclick = function () { switchAppTab("mileage"); };
+    document.getElementById("tabPastDaysBtn").onclick = function () { switchAppTab("pastdays"); };
     document.getElementById("punchBtn").onclick = function () {
       currentOpenSession(getDayData(todayStr)) ? doClockOut() : doClockIn();
     };
