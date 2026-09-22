@@ -94,12 +94,21 @@
   </div>
 
   <div class="panel" id="archivesTab" style="display:none;">
-    <h2 style="margin-bottom:6px;">Archived daily logs</h2>
-    <p class="status-note" style="margin-bottom:14px;">
-      Each employee's day is saved here automatically at 11:59pm and filed by month.
-      To test it without waiting, run the "Archive daily logs" workflow manually from the
-      Actions tab on GitHub.
+    <div class="archive-heading-row">
+      <h2>Archived daily logs</h2>
+      <span class="archive-live-badge">● Live</span>
+    </div>
+    <p class="archive-intro">
+      Past daily logs are grouped by month. Open a month to view employee logs,
+      see the hours worked, or download PDF and CSV copies. Archives are read-only.
     </p>
+    <div class="archive-filter-row">
+      <label for="archiveEmployee">Employee</label>
+      <select id="archiveEmployee">
+        <option value="">All employees</option>
+      </select>
+      <span id="archiveFilterSummary" class="archive-filter-summary">Showing all employees</span>
+    </div>
     <div id="archivesList"><div class="log-empty">Loading…</div></div>
   </div>
 </div>
