@@ -69,112 +69,124 @@
     <button class="punch-btn in" id="punchBtn">Loading…</button>
   </div>
 
-  <div id="viewingBanner" style="display:none;" class="panel">
-    <span id="viewingText"></span>
-    <button id="backToToday" class="edit-link" style="margin-left:12px;">Back to today</button>
+  <div class="tab-row">
+    <button class="tab-btn active" id="tabLogBtn">Log</button>
+    <button class="tab-btn" id="tabMileageBtn">Mileage</button>
+    <button class="tab-btn" id="tabPastDaysBtn">Past Days</button>
   </div>
 
-  <div class="panel" id="addNotePanel">
-    <h2>Add a note</h2>
-    <div class="note-input-row">
-      <input type="text" id="noteInput" placeholder="What are you working on?" maxlength="240">
-      <button id="noteAddBtn">Log</button>
+  <div id="logTab">
+    <div id="viewingBanner" style="display:none;" class="panel">
+      <span id="viewingText"></span>
+      <button id="backToToday" class="edit-link" style="margin-left:12px;">Back to today</button>
     </div>
-  </div>
 
-  <div class="panel">
-    <h2>To-Do List</h2>
-    <div class="note-input-row">
-      <input type="text" id="todoInput" placeholder="Add a to-do…" maxlength="240">
-      <button id="todoAddBtn">Add</button>
-    </div>
-    <ul class="log-list" id="todoList"></ul>
-    <div class="export-row">
-      <button class="btn secondary" id="todoExportPdfBtn">Share list as PDF</button>
-      <button class="btn secondary" id="todoExportCsvBtn">Share list as CSV</button>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>Mileage Log</h2>
-    <p class="status-note" style="text-align:left; margin:0 0 10px;">These fill accounting's exact reimbursement form — set them once, they're remembered.</p>
-    <div class="mileage-row">
-      <div>
-        <label for="mileageEmpNum">Employee #</label>
-        <input type="text" id="mileageEmpNum" placeholder="e.g. 10452">
-      </div>
-      <div>
-        <label for="mileageDeptStore">Dept / Store #</label>
-        <input type="text" id="mileageDeptStore" placeholder="e.g. 730">
+    <div class="panel" id="addNotePanel">
+      <h2>Add a note</h2>
+      <div class="note-input-row">
+        <input type="text" id="noteInput" placeholder="What are you working on?" maxlength="240">
+        <button id="noteAddBtn">Log</button>
       </div>
     </div>
 
-    <h3>Add a trip</h3>
-    <div class="mileage-row">
-      <div>
-        <label for="tripBeginDate">Begin date</label>
-        <input type="date" id="tripBeginDate">
+    <div class="panel">
+      <h2>To-Do List</h2>
+      <div class="note-input-row">
+        <input type="text" id="todoInput" placeholder="Add a to-do…" maxlength="240">
+        <button id="todoAddBtn">Add</button>
       </div>
-      <div>
-        <label for="tripEndDate">End date</label>
-        <input type="date" id="tripEndDate">
+      <ul class="log-list" id="todoList"></ul>
+      <div class="export-row">
+        <button class="btn secondary" id="todoExportPdfBtn">Share list as PDF</button>
+        <button class="btn secondary" id="todoExportCsvBtn">Share list as CSV</button>
       </div>
-    </div>
-    <div class="mileage-row">
-      <div class="mileage-wide">
-        <label for="tripDescription">Description</label>
-        <input type="text" id="tripDescription" placeholder="e.g. Travel to 039 Longview" maxlength="120">
-      </div>
-    </div>
-    <div class="mileage-row">
-      <div>
-        <label for="tripBeginOdo">Beginning odometer</label>
-        <input type="number" id="tripBeginOdo" inputmode="numeric">
-      </div>
-      <div>
-        <label for="tripEndOdo">Ending odometer</label>
-        <input type="number" id="tripEndOdo" inputmode="numeric">
-      </div>
-    </div>
-    <div class="export-row" style="justify-content:flex-start; margin-top:4px;">
-      <button class="btn" id="tripAddBtn">Add Trip</button>
     </div>
 
-    <h3 style="margin-top:18px;">Pending trips <span class="total" id="mileageTotal" style="font-size:14px;">0 mi — $0.00</span></h3>
-    <ul class="log-list" id="mileageList"></ul>
-
-    <div class="export-row">
-      <button class="btn secondary" id="mileageExportBtn">Export Mileage Log (Excel)</button>
-      <button class="btn secondary" id="mileageClearBtn">Clear list (mark as submitted)</button>
+    <div class="panel">
+      <h2><span id="logTitle">Today's log</span><span class="total" id="totalTime">0h 00m</span></h2>
+      <div class="mileage-row" style="margin-top:10px;">
+        <div>
+          <label for="punchInTime">Clock in (optional)</label>
+          <input type="time" id="punchInTime">
+        </div>
+        <div>
+          <label for="punchOutTime">Clock out (optional)</label>
+          <input type="time" id="punchOutTime">
+        </div>
+      </div>
+      <div class="export-row" style="justify-content:flex-start; margin:0 0 14px;">
+        <button class="btn secondary" id="punchAddBtn" style="padding:9px 16px;">Add Punch</button>
+      </div>
+      <ul class="log-list" id="logList"></ul>
+      <div class="export-row">
+        <button class="btn secondary" id="exportBtn">Download this log as PDF (up to now)</button>
+        <button class="btn secondary" id="exportCsvBtn">Download as CSV</button>
+      </div>
     </div>
   </div>
 
-  <div class="panel">
-    <h2><span id="logTitle">Today's log</span><span class="total" id="totalTime">0h 00m</span></h2>
-    <div class="mileage-row" style="margin-top:10px;">
-      <div>
-        <label for="punchInTime">Clock in (optional)</label>
-        <input type="time" id="punchInTime">
+  <div id="mileageTab" style="display:none;">
+    <div class="panel">
+      <h2>Mileage Log</h2>
+      <p class="status-note" style="text-align:left; margin:0 0 10px;">These fill accounting's exact reimbursement form — set them once, they're remembered.</p>
+      <div class="mileage-row">
+        <div>
+          <label for="mileageEmpNum">Employee #</label>
+          <input type="text" id="mileageEmpNum" placeholder="e.g. 10452">
+        </div>
+        <div>
+          <label for="mileageDeptStore">Dept / Store #</label>
+          <input type="text" id="mileageDeptStore" placeholder="e.g. 730">
+        </div>
       </div>
-      <div>
-        <label for="punchOutTime">Clock out (optional)</label>
-        <input type="time" id="punchOutTime">
+
+      <h3>Add a trip</h3>
+      <div class="mileage-row">
+        <div>
+          <label for="tripBeginDate">Begin date</label>
+          <input type="date" id="tripBeginDate">
+        </div>
+        <div>
+          <label for="tripEndDate">End date</label>
+          <input type="date" id="tripEndDate">
+        </div>
       </div>
-    </div>
-    <div class="export-row" style="justify-content:flex-start; margin:0 0 14px;">
-      <button class="btn secondary" id="punchAddBtn" style="padding:9px 16px;">Add Punch</button>
-    </div>
-    <ul class="log-list" id="logList"></ul>
-    <div class="export-row">
-      <button class="btn secondary" id="exportBtn">Download this log as PDF (up to now)</button>
-      <button class="btn secondary" id="exportCsvBtn">Download as CSV</button>
+      <div class="mileage-row">
+        <div class="mileage-wide">
+          <label for="tripDescription">Description</label>
+          <input type="text" id="tripDescription" placeholder="e.g. Travel to 039 Longview" maxlength="120">
+        </div>
+      </div>
+      <div class="mileage-row">
+        <div>
+          <label for="tripBeginOdo">Beginning odometer</label>
+          <input type="number" id="tripBeginOdo" inputmode="numeric">
+        </div>
+        <div>
+          <label for="tripEndOdo">Ending odometer</label>
+          <input type="number" id="tripEndOdo" inputmode="numeric">
+        </div>
+      </div>
+      <div class="export-row" style="justify-content:flex-start; margin-top:4px;">
+        <button class="btn" id="tripAddBtn">Add Trip</button>
+      </div>
+
+      <h3 style="margin-top:18px;">Pending trips <span class="total" id="mileageTotal" style="font-size:14px;">0 mi — $0.00</span></h3>
+      <ul class="log-list" id="mileageList"></ul>
+
+      <div class="export-row">
+        <button class="btn secondary" id="mileageExportBtn">Export Mileage Log (Excel)</button>
+        <button class="btn secondary" id="mileageClearBtn">Clear list (mark as submitted)</button>
+      </div>
     </div>
   </div>
 
-  <div class="panel">
-    <h2>Past days</h2>
-    <p class="status-note" style="text-align:left; margin-bottom:10px;">A PDF of each day is saved automatically at 11:59pm — once that's happened, a PDF link shows up next to that day below.</p>
-    <div id="historyList"><div class="log-empty">Loading…</div></div>
+  <div id="pastDaysTab" style="display:none;">
+    <div class="panel">
+      <h2>Past days</h2>
+      <p class="status-note" style="text-align:left; margin-bottom:10px;">A PDF of each day is saved automatically at 11:59pm — once that's happened, a PDF link shows up next to that day below.</p>
+      <div id="historyList"><div class="log-empty">Loading…</div></div>
+    </div>
   </div>
 </div>
 
