@@ -1,86 +1,269 @@
-// Renders a list of archive records (from the `archives` Firestore
-// collection) into `containerEl`, grouped by month, newest first.
-// `docs`: array of { id, uid, name, date, month, sessions, notes, totalMinutes }
-// `showName`: true to show whose log it is on each row (admin view).
+// Admin archive browser. Records are grouped by month, newest first.
+// The newest month opens automatically; every archived day remains read-only.
 function renderArchiveGroups(containerEl, docs, showName) {
   containerEl.innerHTML = "";
   if (!docs.length) {
-    containerEl.innerHTML = '<div class="log-empty">No archived logs yet — the first one is saved automatically at 11:59pm.</div>';
+    containerEl.innerHTML = '<div class="archive-empty">No archived logs yet. The first archive is saved automatically at the end of the day.</div>';
     return;
   }
 
-  var byMonth = {};
-  docs.forEach(function (d) {
-    if (!byMonth[d.month]) byMonth[d.month] = [];
-    byMonth[d.month].push(d);
-  });
-  var months = Object.keys(byMonth).sort().reverse();
+  var employeeSelect = document.getElementById("archiveEmployee");
+  var selectedUid = employeeSelect ? employeeSelect.value : "";
+  if (employeeSelect) {
+    var employeesByUid = {};
+    docs.forEach(function (doc) {
+      if (doc.uid) employeesByUid[doc.uid] = doc.name || "Employee";
+    });
+    employeeSelect.innerHTML = '<option value="">All employees</option>';
+    Object.keys(employeesByUid).sort(function (a, b) {
+      return employeesByUid[a].localeCompare(employeesByUid[b]);
+    }).forEach(function (uid) {
+      var option = document.createElement("option");
+      option.value = uid;
+      option.textContent = employeesByUid[uid];
+      employeeSelect.appendChild(option);
+    });
+    if (selectedUid && employeesByUid[selectedUid]) employeeSelect.value = selectedUid;
+    else selectedUid = "";
+  }
 
-  months.forEach(function (month, i) {
-    var entries = byMonth[month].slice().sort(function (a, b) { return b.date.localeCompare(a.date); });
-    var details = document.createElement("details");
-    details.open = i === 0;
-    details.style.marginBottom = "10px";
+  var visibleDocs = selectedUid ? docs.filter(function (doc) { return doc.uid === selectedUid; }) : docs;
+  var filterSummary = document.getElementById("archiveFilterSummary");
+  if (filterSummary) {
+    var selectedName = employeeSelect && employeeSelect.selectedIndex >= 0
+      ? employeeSelect.options[employeeSelect.selectedIndex].textContent
+      : "All employees";
+    filterSummary.textContent = selectedUid
+      ? "Showing " + selectedName + " — " + visibleDocs.length + (visibleDocs.length === 1 ? " archived day" : " archived days")
+      : "Showing all employees — " + visibleDocs.length + (visibleDocs.length === 1 ? " archived day" : " archived days");
+  }
+
+  var byMonth = {};
+  visibleDocs.forEach(function (doc) {
+    var month = doc.month || String(doc.date || "").slice(0, 7) || "Unknown";
+    if (!byMonth[month]) byMonth[month] = [];
+    byMonth[month].push(doc);
+  });
+
+  Object.keys(byMonth).sort().reverse().forEach(function (month, monthIndex) {
+    var entries = byMonth[month].slice().sort(function (a, b) {
+      return String(b.date || "").localeCompare(String(a.date || "")) ||
+        String(a.name || "").localeCompare(String(b.name || ""));
+    });
+    var monthMinutes = entries.reduce(function (sum, entry) {
+      return sum + archiveMinutes(entry);
+    }, 0);
+
+    var group = document.createElement("details");
+    group.className = "archive-month";
+    group.open = monthIndex === 0;
 
     var summary = document.createElement("summary");
-    summary.style.cursor = "pointer";
-    summary.style.fontFamily = "'Barlow Condensed', sans-serif";
-    summary.style.fontWeight = "600";
-    summary.style.fontSize = "17px";
-    summary.style.color = "var(--pine)";
-    summary.style.padding = "6px 0";
-    summary.textContent = fmtMonthLabel(month) + " (" + entries.length + ")";
-    details.appendChild(summary);
+    summary.className = "archive-month-summary";
 
-    var list = document.createElement("div");
-    entries.forEach(function (e) {
-      var row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.justifyContent = "space-between";
-      row.style.alignItems = "center";
-      row.style.padding = "7px 0";
-      row.style.borderBottom = "1px dashed var(--line)";
+    var monthTitle = document.createElement("span");
+    monthTitle.className = "archive-month-title";
+    monthTitle.textContent = fmtMonthLabel(month);
 
-      var left = document.createElement("span");
-      left.style.fontSize = "14px";
-      left.textContent = fmtHeaderDate(e.date) + (showName ? "  —  " + e.name : "");
+    var monthStats = document.createElement("span");
+    monthStats.className = "archive-month-stats";
+    monthStats.textContent = entries.length + (entries.length === 1 ? " log" : " logs") + " · " + fmtDuration(monthMinutes);
 
-      var right = document.createElement("div");
-      right.style.display = "flex";
-      right.style.alignItems = "center";
-      right.style.gap = "10px";
-      var total = document.createElement("span");
-      total.style.fontFamily = "'Space Mono', monospace";
-      total.style.fontSize = "13px";
-      total.style.color = "var(--ink-soft)";
-      total.textContent = fmtDuration(e.totalMinutes || 0);
-      var viewBtn = document.createElement("button");
-      viewBtn.className = "btn secondary";
-      viewBtn.style.padding = "4px 12px";
-      viewBtn.style.fontSize = "13px";
-      viewBtn.textContent = "View PDF";
+    summary.appendChild(monthTitle);
+    summary.appendChild(monthStats);
+    group.appendChild(summary);
+
+    var content = document.createElement("div");
+    content.className = "archive-month-content";
+
+    var monthTools = document.createElement("div");
+    monthTools.className = "archive-month-tools";
+    var monthCsvBtn = document.createElement("button");
+    monthCsvBtn.className = "btn archive-month-download";
+    monthCsvBtn.textContent = "Download CSV for " + fmtMonthLabel(month);
+    monthCsvBtn.onclick = function () { exportArchiveMonthCsv(month, entries); };
+    monthTools.appendChild(monthCsvBtn);
+    content.appendChild(monthTools);
+
+    var tableWrap = document.createElement("div");
+    tableWrap.className = "archive-table-wrap";
+    var table = document.createElement("table");
+    table.className = "archive-table";
+    table.innerHTML = '<thead><tr><th>Date</th>' +
+      (showName ? '<th>Employee</th>' : '') +
+      '<th>Punches</th><th>Notes</th><th>Total</th><th>Actions</th></tr></thead>';
+    var tbody = document.createElement("tbody");
+
+    entries.forEach(function (entry) {
+      var row = document.createElement("tr");
+      var dateCell = document.createElement("td");
+      dateCell.className = "archive-date-cell";
+      dateCell.textContent = fmtHeaderDate(entry.date);
+      row.appendChild(dateCell);
+
+      if (showName) {
+        var nameCell = document.createElement("td");
+        nameCell.textContent = entry.name || "Employee";
+        row.appendChild(nameCell);
+      }
+
+      var punchesCell = document.createElement("td");
+      punchesCell.textContent = String(archivePunchCount(entry));
+      row.appendChild(punchesCell);
+
+      var notesCell = document.createElement("td");
+      notesCell.textContent = String((entry.notes || []).length + (entry.completedTodos || []).length);
+      row.appendChild(notesCell);
+
+      var totalCell = document.createElement("td");
+      totalCell.className = "archive-total-cell";
+      totalCell.textContent = fmtDuration(archiveMinutes(entry));
+      row.appendChild(totalCell);
+
+      var actionsCell = document.createElement("td");
+      actionsCell.className = "archive-actions";
+      var detailRow = document.createElement("tr");
+      detailRow.className = "archive-detail-row";
+      detailRow.hidden = true;
+      var detailCell = document.createElement("td");
+      detailCell.colSpan = showName ? 6 : 5;
+      detailCell.appendChild(buildArchiveDayDetail(entry));
+      detailRow.appendChild(detailCell);
+
+      var viewBtn = makeArchiveAction("View", "primary");
+      viewBtn.setAttribute("aria-expanded", "false");
       viewBtn.onclick = function () {
-        exportDayPdf(e.name, e.date, { sessions: e.sessions || [], notes: e.notes || [], completedTodos: e.completedTodos || [] });
+        var opening = detailRow.hidden;
+        detailRow.hidden = !opening;
+        viewBtn.textContent = opening ? "Close" : "View";
+        viewBtn.setAttribute("aria-expanded", String(opening));
       };
-      var csvBtn = document.createElement("button");
-      csvBtn.className = "btn secondary";
-      csvBtn.style.padding = "4px 12px";
-      csvBtn.style.fontSize = "13px";
-      csvBtn.textContent = "CSV";
+      var pdfBtn = makeArchiveAction("PDF", "secondary");
+      pdfBtn.onclick = function () {
+        exportDayPdf(entry.name, entry.date, archiveDayData(entry));
+      };
+      var csvBtn = makeArchiveAction("CSV", "secondary");
       csvBtn.onclick = function () {
-        exportDayCsv(e.name, e.date, { sessions: e.sessions || [], notes: e.notes || [], completedTodos: e.completedTodos || [] });
+        exportDayCsv(entry.name, entry.date, archiveDayData(entry));
       };
 
-      right.appendChild(total);
-      right.appendChild(viewBtn);
-      right.appendChild(csvBtn);
-      row.appendChild(left);
-      row.appendChild(right);
-      list.appendChild(row);
+      actionsCell.appendChild(viewBtn);
+      actionsCell.appendChild(pdfBtn);
+      actionsCell.appendChild(csvBtn);
+      row.appendChild(actionsCell);
+      tbody.appendChild(row);
+      tbody.appendChild(detailRow);
     });
-    details.appendChild(list);
-    containerEl.appendChild(details);
+
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    content.appendChild(tableWrap);
+    group.appendChild(content);
+    containerEl.appendChild(group);
   });
+}
+
+function archiveDayData(entry) {
+  return {
+    sessions: entry.sessions || [],
+    notes: entry.notes || [],
+    completedTodos: entry.completedTodos || []
+  };
+}
+
+function archiveMinutes(entry) {
+  return typeof entry.totalMinutes === "number" ? entry.totalMinutes : totalMinutesFor(entry);
+}
+
+function archivePunchCount(entry) {
+  return (entry.sessions || []).reduce(function (count, session) {
+    return count + (session.clockIn ? 1 : 0) + (session.clockOut ? 1 : 0);
+  }, 0);
+}
+
+function makeArchiveAction(label, kind) {
+  var button = document.createElement("button");
+  button.className = "archive-action " + kind;
+  button.type = "button";
+  button.textContent = label;
+  return button;
+}
+
+function buildArchiveDayDetail(entry) {
+  var panel = document.createElement("div");
+  panel.className = "archive-day-detail";
+
+  var title = document.createElement("div");
+  title.className = "archive-day-detail-title";
+  title.textContent = (entry.name || "Employee") + " — " + fmtHeaderDate(entry.date) + " — " + fmtDuration(archiveMinutes(entry));
+  panel.appendChild(title);
+
+  var timeline = [];
+  (entry.sessions || []).forEach(function (session) {
+    if (session.clockIn) timeline.push({ time: session.clockIn, type: "Clocked in", detail: "" });
+    if (session.clockOut) {
+      timeline.push({
+        time: session.clockOut,
+        type: "Clocked out",
+        detail: session.clockIn ? fmtDuration(minutesBetween(session.clockIn, session.clockOut)) : ""
+      });
+    }
+  });
+  (entry.notes || []).forEach(function (note) {
+    timeline.push({ time: note.time, type: "Note", detail: note.text || "" });
+  });
+  (entry.completedTodos || []).forEach(function (todo) {
+    timeline.push({ time: todo.completedAt, type: "Completed", detail: todo.text || "" });
+  });
+  timeline.sort(function (a, b) { return new Date(a.time) - new Date(b.time); });
+
+  if (!timeline.length) {
+    var empty = document.createElement("div");
+    empty.className = "archive-day-empty";
+    empty.textContent = "No punches or notes were saved for this day.";
+    panel.appendChild(empty);
+    return panel;
+  }
+
+  timeline.forEach(function (item) {
+    var line = document.createElement("div");
+    line.className = "archive-timeline-row";
+    var time = document.createElement("span");
+    time.className = "archive-timeline-time";
+    time.textContent = item.time ? fmtTime(item.time) : "—";
+    var type = document.createElement("span");
+    type.className = "archive-timeline-type";
+    type.textContent = item.type;
+    var detail = document.createElement("span");
+    detail.className = "archive-timeline-detail";
+    detail.textContent = item.detail;
+    line.appendChild(time);
+    line.appendChild(type);
+    line.appendChild(detail);
+    panel.appendChild(line);
+  });
+  return panel;
+}
+
+function exportArchiveMonthCsv(month, entries) {
+  var rows = [
+    ["Archived Daily Logs"],
+    ["Month", fmtMonthLabel(month)],
+    [],
+    ["Employee", "Date", "Punches", "Notes / Completed", "Total Hours"]
+  ];
+  entries.slice().sort(function (a, b) {
+    return String(a.name || "").localeCompare(String(b.name || "")) || String(a.date || "").localeCompare(String(b.date || ""));
+  }).forEach(function (entry) {
+    rows.push([
+      entry.name || "Employee",
+      fmtHeaderDate(entry.date),
+      archivePunchCount(entry),
+      (entry.notes || []).length + (entry.completedTodos || []).length,
+      fmtDuration(archiveMinutes(entry))
+    ]);
+  });
+  downloadCsvFile("archived-worklogs-" + month + ".csv", rows);
 }
 
 function fmtMonthLabel(monthStr) {

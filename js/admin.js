@@ -121,7 +121,11 @@
     unsubArchives = db.collection("archives").onSnapshot(function (snap) {
       archiveDocs = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
       renderArchiveGroups(document.getElementById("archivesList"), archiveDocs, true);
-    }, function (err) { console.error("archives snapshot error", err); });
+    }, function (err) {
+      console.error("archives snapshot error", err);
+      var listEl = document.getElementById("archivesList");
+      if (listEl) listEl.innerHTML = '<div class="log-empty">Something went wrong loading the archives.</div>';
+    });
   }
 
   function switchTab(tab) {
@@ -717,6 +721,9 @@
     document.getElementById("tabPastDaysBtn").onclick = function () { switchTab("pastdays"); };
     document.getElementById("tabPayPeriodBtn").onclick = function () { switchTab("payperiod"); };
     document.getElementById("tabArchivesBtn").onclick = function () { switchTab("archives"); };
+    document.getElementById("archiveEmployee").onchange = function () {
+      renderArchiveGroups(document.getElementById("archivesList"), archiveDocs, true);
+    };
 
     var defaults = defaultPeriodRange();
     document.getElementById("periodStart").value = defaults.start;
