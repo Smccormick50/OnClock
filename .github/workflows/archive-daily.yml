@@ -7,20 +7,25 @@ on:
     # offset changes with daylight saving:
     #   - "59 4 * * *"  = 23:59 CDT (UTC-5, roughly Mar-Nov)
     #   - "59 5 * * *"  = 23:59 CST (UTC-6, roughly Nov-Mar)
-    # Whichever one lands outside the real 11pm hour self-skips (see
-    # archive-daily.js), so only one of these two actually archives
-    # on any given night. This intentionally schedules only 2 runs a
-    # day rather than 24 hourly ones — GitHub Actions does not
-    # guarantee scheduled workflows fire exactly on time and can skip
-    # runs under load, and that's more likely the more often a
-    # schedule fires. Two precise attempts a day is far more reliable
-    # in practice than 24 hourly "is it time yet?" checks.
+    # GitHub Actions doesn't guarantee scheduled workflows fire at the
+    # requested time and can delay them by hours under load, so the
+    # script itself doesn't try to detect "is it close enough to
+    # midnight" anymore — every scheduled run just always archives
+    # "yesterday" (Chicago time), which is correct no matter how late
+    # it actually executes. Two scheduled attempts a day (rather than
+    # one) just adds a little redundancy against a run getting skipped
+    # entirely; both landing the same day is harmless; see
+    # archive-daily.js for why.
     - cron: "59 4 * * *"
     - cron: "59 5 * * *"
   workflow_dispatch:
     inputs:
       date:
-        description: "Re-archive a specific date (YYYY-MM-DD). Leave blank to archive today right now instead of waiting for 11pm — e.g. use this after an admin corrects a past day's punches, to refresh that day's saved PDF."
+        description: "Archive a specific date (YYYY-MM-DD). Leave blank to archive today right now instead of waiting for 11pm."
+        required: false
+        type: string
+      endDate:
+        description: "Optional — fill this in too to backfill every date from 'date' through this one, inclusive (e.g. catching up several days that were never archived). Leave blank to archive just the single 'date' above."
         required: false
         type: string
 
@@ -39,3 +44,4 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           ARCHIVE_DATE: ${{ github.event.inputs.date }}
+          ARCHIVE_END_DATE: ${{ github.event.inputs.endDate }}
