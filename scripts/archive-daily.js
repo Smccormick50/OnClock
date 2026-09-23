@@ -9,8 +9,6 @@
 // actual PDF in the browser, on the fly, whenever someone clicks
 // "View PDF" — the same jsPDF code the on-demand download button uses.
 
-const admin = require("firebase-admin");
-
 // Change this if your team isn't in Central time — must be an IANA
 // zone name, e.g. "America/New_York", "America/Denver".
 const TIME_ZONE = "America/Chicago";
@@ -62,19 +60,33 @@ function wallTimeToUtcIso(dateStr, hh, mm, ss) {
   return guess.toISOString();
 }
 
-// If any session for the day has no clockOut, close it at 11:59:00pm
-// that day (TIME_ZONE). Scans the whole array rather than assuming
-// the open one is last — a backfilled punch could sit after it out
-// of chronological order. Returns true if it changed anything.
-function autoCloseOpenSession(data, dateStr) {
+// Closes every open session in an archive copy at `closeAtIso`.
+// A session whose clock-in is somehow later than the close time is left
+// alone instead of producing a negative or made-up duration.
+function closeOpenSessions(data, closeAtIso) {
   const sessions = data.sessions || [];
-  for (let i = sessions.length - 1; i >= 0; i--) {
-    if (sessions[i].clockIn && !sessions[i].clockOut) {
-      sessions[i].clockOut = wallTimeToUtcIso(dateStr, 23, 59, 0);
-      return true;
+  const closeAtMs = new Date(closeAtIso).getTime();
+  let closed = 0;
+  for (let i = 0; i < sessions.length; i++) {
+    if (sessions[i].clockIn && !sessions[i].clockOut && new Date(sessions[i].clockIn).getTime() <= closeAtMs) {
+      sessions[i].clockOut = closeAtIso;
+      closed++;
     }
   }
-  return false;
+  return closed;
+}
+
+function copyEntryData(data) {
+  return {
+    uid: data.uid,
+    name: data.name || "Employee",
+    sessions: (data.sessions || []).map((session) => ({
+      clockIn: session.clockIn || null,
+      clockOut: session.clockOut || null,
+    })),
+    notes: (data.notes || []).map((note) => ({ ...note })),
+    completedTodos: (data.completedTodos || []).map((todo) => ({ ...todo })),
+  };
 }
 
 // Shifts a YYYY-MM-DD string by a number of days, as pure calendar
@@ -87,45 +99,58 @@ function shiftDateStr(dateStr, deltaDays) {
 }
 
 // Archives one date. Returns { archived, autoClocked } counts.
-async function archiveOneDate(db, dateStr) {
+async function archiveOneDate(db, dateStr, now) {
   const snap = await db.collection("entries").where("date", "==", dateStr).get();
+  const todayStr = tzDateStr(now, TIME_ZONE);
+  const isCurrentDate = dateStr === todayStr;
+  const closeAtIso = isCurrentDate
+    ? now.toISOString()
+    : wallTimeToUtcIso(dateStr, 23, 59, 0);
 
   let archived = 0;
   let autoClocked = 0;
   for (const docSnap of snap.docs) {
     const data = docSnap.data();
+    const archiveData = copyEntryData(data);
+    const closedSessions = closeOpenSessions(archiveData, closeAtIso);
 
-    if (autoCloseOpenSession(data, dateStr)) {
+    // For a completed past date, persist the automatic end-of-day
+    // clock-out so the live entry and archive agree. For a manual
+    // snapshot of today, never touch the live open shift — the archive
+    // copy stops at "now" only for purposes of its current total.
+    if (!isCurrentDate && closedSessions > 0) {
       await docSnap.ref.set({
-        uid: data.uid,
-        name: data.name || "Employee",
+        uid: archiveData.uid,
+        name: archiveData.name,
         date: dateStr,
-        sessions: data.sessions,
-        notes: data.notes || [],
-        completedTodos: data.completedTodos || [],
+        sessions: archiveData.sessions,
+        notes: archiveData.notes,
+        completedTodos: archiveData.completedTodos,
       });
-      autoClocked++;
+      autoClocked += closedSessions;
     }
 
-    const hasContent = (data.sessions && data.sessions.length) || (data.notes && data.notes.length) || (data.completedTodos && data.completedTodos.length);
+    const hasContent = archiveData.sessions.length || archiveData.notes.length || archiveData.completedTodos.length;
     if (!hasContent) continue;
 
     const month = dateStr.slice(0, 7); // "YYYY-MM"
-    await db.collection("archives").doc(`${data.uid}_${dateStr}`).set({
-      uid: data.uid,
-      name: data.name || "Employee",
+    await db.collection("archives").doc(`${archiveData.uid}_${dateStr}`).set({
+      uid: archiveData.uid,
+      name: archiveData.name,
       date: dateStr,
       month,
-      sessions: data.sessions || [],
-      notes: data.notes || [],
-      completedTodos: data.completedTodos || [],
-      totalMinutes: totalMinutesFor(data),
-      archivedAt: new Date().toISOString(),
+      sessions: archiveData.sessions,
+      notes: archiveData.notes,
+      completedTodos: archiveData.completedTodos,
+      totalMinutes: totalMinutesFor(archiveData),
+      archivedAt: now.toISOString(),
+      isCurrentDaySnapshot: isCurrentDate,
     });
     archived++;
   }
 
-  console.log(`  ${dateStr}: archived ${archived} log(s), auto-clocked-out ${autoClocked} still-open session(s).`);
+  const snapshotNote = isCurrentDate ? " (current-day snapshot; live open shifts unchanged)" : "";
+  console.log(`  ${dateStr}: archived ${archived} log(s), auto-clocked-out ${autoClocked} past open session(s)${snapshotNote}.`);
   return { archived, autoClocked };
 }
 
@@ -147,23 +172,12 @@ function dateRange(startStr, endStr) {
 async function main() {
   const now = new Date();
   const isManualRun = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
+  const todayStr = tzDateStr(now, TIME_ZONE);
 
-  // GitHub Actions does not guarantee scheduled workflows fire at the
-  // requested time — in practice, runs on this repo have landed 5-7
-  // hours late (11:59pm CDT scheduled, but actually executing around
-  // 5am). Trying to detect "is it currently near midnight" and skip
-  // otherwise meant the script almost always skipped, since by the
-  // time it actually ran, it was already well into the next morning —
-  // so nothing ever got archived, despite the workflow showing green.
-  //
-  // So a scheduled run no longer checks the clock at all. It simply
-  // always archives "yesterday" (Chicago calendar date, relative to
-  // whenever this happens to execute). That's correct no matter how
-  // late the run lands: even six hours late, the day that ended at
-  // midnight is still "yesterday". This is also fully idempotent
-  // (same Firestore doc ID, full overwrite each time), so if both
-  // scheduled cron entries fire on the same day, or a run repeats,
-  // it just re-saves the same result — harmless either way.
+  // Scheduled runs happen safely after midnight Central and archive
+  // yesterday. Manual runs default to yesterday too. An explicitly
+  // requested current date is allowed as a read-only "up to now"
+  // snapshot and never closes the live shift.
   let dates;
   if (isManualRun) {
     const requestedDate = (process.env.ARCHIVE_DATE || "").trim();
@@ -179,11 +193,15 @@ async function main() {
     } else if (validDate) {
       dates = [requestedDate];
     } else {
-      if (requestedDate) console.warn(`"${requestedDate}" isn't a valid YYYY-MM-DD date — archiving today instead.`);
-      dates = [tzDateStr(now, TIME_ZONE)];
+      if (requestedDate) console.warn(`"${requestedDate}" isn't a valid YYYY-MM-DD date — archiving yesterday instead.`);
+      dates = [shiftDateStr(todayStr, -1)];
     }
   } else {
-    dates = [shiftDateStr(tzDateStr(now, TIME_ZONE), -1)];
+    dates = [shiftDateStr(todayStr, -1)];
+  }
+
+  if (dates.some((dateStr) => dateStr > todayStr)) {
+    throw new Error(`A future date cannot be archived. Today in ${TIME_ZONE} is ${todayStr}.`);
   }
 
   console.log(`Running at ${tzHour(now, TIME_ZONE)}:xx ${TIME_ZONE} (isManualRun=${isManualRun}), targeting: ${dates.join(", ")}.`);
@@ -191,6 +209,7 @@ async function main() {
   if (!serviceAccountJson) {
     throw new Error("FIREBASE_SERVICE_ACCOUNT secret is not set.");
   }
+  const admin = require("firebase-admin");
   const serviceAccount = JSON.parse(serviceAccountJson);
   admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
   const db = admin.firestore();
@@ -198,7 +217,7 @@ async function main() {
   let totalArchived = 0;
   let totalAutoClocked = 0;
   for (const dateStr of dates) {
-    const result = await archiveOneDate(db, dateStr);
+    const result = await archiveOneDate(db, dateStr, now);
     totalArchived += result.archived;
     totalAutoClocked += result.autoClocked;
   }
@@ -206,7 +225,19 @@ async function main() {
   console.log(`Done. ${totalArchived} log(s) archived across ${dates.length} day(s), ${totalAutoClocked} auto-clocked-out.`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  archiveOneDate,
+  closeOpenSessions,
+  copyEntryData,
+  shiftDateStr,
+  totalMinutesFor,
+  tzDateStr,
+  wallTimeToUtcIso,
+};
