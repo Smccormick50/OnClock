@@ -164,15 +164,29 @@ function renderArchiveGroups(containerEl, docs, showName) {
 }
 
 function archiveDayData(entry) {
+  var archivedAtMs = entry.archivedAt ? new Date(entry.archivedAt).getTime() : NaN;
   return {
-    sessions: entry.sessions || [],
+    // Older versions of the manual archive job could give a still-open
+    // same-day session an 11:59pm clock-out. If that clock-out is later
+    // than the moment the archive was actually created, cap the frozen
+    // copy at archivedAt. This repairs the displayed total, PDF and CSV
+    // without changing the employee's live entry.
+    sessions: (entry.sessions || []).map(function (session) {
+      var copy = { clockIn: session.clockIn || null, clockOut: session.clockOut || null };
+      if (copy.clockOut && Number.isFinite(archivedAtMs) && new Date(copy.clockOut).getTime() > archivedAtMs) {
+        copy.clockOut = entry.archivedAt;
+      }
+      return copy;
+    }),
     notes: entry.notes || [],
     completedTodos: entry.completedTodos || []
   };
 }
 
 function archiveMinutes(entry) {
-  return typeof entry.totalMinutes === "number" ? entry.totalMinutes : totalMinutesFor(entry);
+  // Recalculate from the normalized frozen sessions instead of trusting
+  // an older stored total that may include a future 11:59pm clock-out.
+  return totalMinutesFor(archiveDayData(entry));
 }
 
 function archivePunchCount(entry) {
@@ -198,8 +212,9 @@ function buildArchiveDayDetail(entry) {
   title.textContent = (entry.name || "Employee") + " — " + fmtHeaderDate(entry.date) + " — " + fmtDuration(archiveMinutes(entry));
   panel.appendChild(title);
 
+  var data = archiveDayData(entry);
   var timeline = [];
-  (entry.sessions || []).forEach(function (session) {
+  data.sessions.forEach(function (session) {
     if (session.clockIn) timeline.push({ time: session.clockIn, type: "Clocked in", detail: "" });
     if (session.clockOut) {
       timeline.push({
@@ -209,10 +224,10 @@ function buildArchiveDayDetail(entry) {
       });
     }
   });
-  (entry.notes || []).forEach(function (note) {
+  data.notes.forEach(function (note) {
     timeline.push({ time: note.time, type: "Note", detail: note.text || "" });
   });
-  (entry.completedTodos || []).forEach(function (todo) {
+  data.completedTodos.forEach(function (todo) {
     timeline.push({ time: todo.completedAt, type: "Completed", detail: todo.text || "" });
   });
   timeline.sort(function (a, b) { return new Date(a.time) - new Date(b.time); });
