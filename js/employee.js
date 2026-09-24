@@ -23,7 +23,22 @@
     return docCache[dateStr] || emptyDay();
   }
 
-  function saveDay(dateStr, data) {
+  function auditCol() { return db.collection("auditLogs"); }
+  function writeAudit(action, dateStr, detail) {
+    return auditCol().add({
+      actorUid: currentUser.uid,
+      actorName: currentProfile.name || currentProfile.email || "Employee",
+      targetUid: currentUser.uid,
+      targetName: currentProfile.name || currentProfile.email || "Employee",
+      date: dateStr || "",
+      action: action,
+      detail: detail || "",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdAtIso: new Date().toISOString()
+    }).catch(function (err) { console.error("audit write error", err); });
+  }
+
+  function saveDay(dateStr, data, auditAction, auditDetail) {
     return entryRef(dateStr).set({
       uid: currentUser.uid,
       name: currentProfile.name,
@@ -31,6 +46,8 @@
       sessions: data.sessions,
       notes: data.notes,
       completedTodos: data.completedTodos || []
+    }).then(function () {
+      if (auditAction) return writeAudit(auditAction, dateStr, auditDetail);
     });
   }
 
@@ -79,12 +96,12 @@
     var data = clone(getDayData(todayStr));
     data.completedTodos = data.completedTodos || [];
     data.completedTodos.push({ text: item.text, completedAt: new Date().toISOString() });
-    saveDay(todayStr, data);
+    saveDay(todayStr, data, "completed_task_added", "Completed task: " + item.text);
   }
   function doDeleteCompletedTodo(dateStr, idx) {
     var data = clone(getDayData(dateStr));
-    (data.completedTodos || []).splice(idx, 1);
-    saveDay(dateStr, data);
+    var removed = (data.completedTodos || []).splice(idx, 1)[0];
+    saveDay(dateStr, data, "completed_task_deleted", "Deleted completed task: " + ((removed && removed.text) || "(blank task)"));
   }
   function doEditCompletedTodo(dateStr, idx, newText, timeVal) {
     var data = clone(getDayData(dateStr));
@@ -93,7 +110,7 @@
     newText = newText.trim();
     if (newText) ct.text = newText;
     if (timeVal) ct.completedAt = fromTimeInputValue(dateStr, timeVal);
-    saveDay(dateStr, data);
+    saveDay(dateStr, data, "completed_task_edited", "Edited a completed task at " + (timeVal || timeInputValue(ct.completedAt)) + " CT.");
   }
 
   function renderTodos() {
@@ -378,9 +395,10 @@
   function doClockIn() {
     var data = clone(getDayData(todayStr));
     if (currentOpenSession(data)) return;
-    data.sessions.push({ clockIn: new Date().toISOString(), clockOut: null });
+    var now = new Date().toISOString();
+    data.sessions.push({ clockIn: now, clockOut: null });
     setBtnBusy(true);
-    saveDay(todayStr, data).finally(function () { setBtnBusy(false); });
+    saveDay(todayStr, data, "clock_in", "Clocked in at " + fmtTime(now) + " CT.").finally(function () { setBtnBusy(false); });
   }
   function doClockOut() {
     var data = clone(getDayData(todayStr));
@@ -388,19 +406,19 @@
     if (!open) return;
     open.clockOut = new Date().toISOString();
     setBtnBusy(true);
-    saveDay(todayStr, data).finally(function () { setBtnBusy(false); });
+    saveDay(todayStr, data, "clock_out", "Clocked out at " + fmtTime(open.clockOut) + " CT.").finally(function () { setBtnBusy(false); });
   }
   function doAddNote(text) {
     text = text.trim();
     if (!text) return;
     var data = clone(getDayData(todayStr));
     data.notes.push({ time: new Date().toISOString(), text: text });
-    saveDay(todayStr, data);
+    saveDay(todayStr, data, "note_added", "Added note: " + text);
   }
   function doDeleteNote(dateStr, idx) {
     var data = clone(getDayData(dateStr));
-    data.notes.splice(idx, 1);
-    saveDay(dateStr, data);
+    var removed = data.notes.splice(idx, 1)[0];
+    saveDay(dateStr, data, "note_deleted", "Deleted note: " + ((removed && removed.text) || "(blank note)"));
   }
   function doEditNote(dateStr, idx, newText, timeVal) {
     var data = clone(getDayData(dateStr));
@@ -409,19 +427,21 @@
     newText = newText.trim();
     if (newText) note.text = newText;
     if (timeVal) note.time = fromTimeInputValue(dateStr, timeVal);
-    saveDay(dateStr, data);
+    saveDay(dateStr, data, "note_edited", "Edited a work note at " + (timeVal || timeInputValue(note.time)) + " CT.");
   }
   function doDeleteSession(dateStr, idx) {
     var data = clone(getDayData(dateStr));
-    data.sessions.splice(idx, 1);
-    saveDay(dateStr, data);
+    var removed = data.sessions.splice(idx, 1)[0];
+    var summary = removed ? ((removed.clockIn ? "in " + fmtTime(removed.clockIn) : "no clock-in") + ", " + (removed.clockOut ? "out " + fmtTime(removed.clockOut) : "no clock-out")) : "punch";
+    saveDay(dateStr, data, "punch_deleted", "Deleted punch (" + summary + ").");
   }
   function doEditSession(dateStr, idx, field, timeVal) {
     var data = clone(getDayData(dateStr));
     var sess = data.sessions[idx];
     if (!sess) return;
+    var oldValue = sess[field];
     sess[field] = fromTimeInputValue(dateStr, timeVal);
-    saveDay(dateStr, data);
+    saveDay(dateStr, data, "punch_edited", "Changed " + (field === "clockIn" ? "clock-in" : "clock-out") + " from " + fmtTime(oldValue) + " to " + fmtTime(sess[field]) + " CT.");
   }
 
   function doAddPunch() {
@@ -464,7 +484,8 @@
     } else {
       data.sessions.push({ clockIn: clockIn, clockOut: clockOut });
     }
-    saveDay(viewedDate, data);
+    var detail = "Added " + (inVal ? "clock-in " + fmtTime(clockIn) : "no clock-in") + " and " + (outVal ? "clock-out " + fmtTime(clockOut) : "no clock-out") + " CT.";
+    saveDay(viewedDate, data, "punch_added", detail);
     document.getElementById("punchInTime").value = "";
     document.getElementById("punchOutTime").value = "";
   }
@@ -474,6 +495,10 @@
   // ---------- rendering ----------
   function tickClock() {
     var now = new Date();
+    if (localDateStr(now) !== todayStr) {
+      window.location.reload();
+      return;
+    }
     document.getElementById("liveClock").textContent = fmtTimeSec(now);
     if (viewedDate === todayStr) {
       var data = getDayData(todayStr);
@@ -516,6 +541,8 @@
       banner.style.display = "none";
     }
     document.getElementById("addNotePanel").style.display = viewedDate === todayStr ? "block" : "none";
+    var manualPunchDetails = document.getElementById("manualPunchDetails");
+    if (manualPunchDetails && viewedDate !== todayStr) manualPunchDetails.open = true;
 
     var rows = [];
     (data.sessions || []).forEach(function (s, idx) {
@@ -598,7 +625,7 @@
       var currentIso = sess[field];
       var input = document.createElement("input");
       input.type = "time";
-      input.value = currentIso ? new Date(currentIso).toTimeString().slice(0, 5) : "";
+      input.value = timeInputValue(currentIso);
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
       var box = document.createElement("div");
@@ -651,7 +678,7 @@
 
       var timeInput = document.createElement("input");
       timeInput.type = "time";
-      timeInput.value = currentTimeIso ? new Date(currentTimeIso).toTimeString().slice(0, 5) : "";
+      timeInput.value = timeInputValue(currentTimeIso);
 
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
@@ -713,7 +740,7 @@
 
       var timeInput = document.createElement("input");
       timeInput.type = "time";
-      timeInput.value = currentTimeIso ? new Date(currentTimeIso).toTimeString().slice(0, 5) : "";
+      timeInput.value = timeInputValue(currentTimeIso);
 
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";

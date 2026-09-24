@@ -4,19 +4,17 @@
   var currentUser = null;
   var currentProfile = null;
   var selectedDate = localDateStr(new Date());
-  var yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  var pastSelectedDate = localDateStr(yesterday);
   var users = []; // {id, name, email, role}
   var entriesByUid = {}; // uid -> {sessions, notes}
-  var pastEntriesByUid = {};
   var openUid = null; // which employee row is expanded
-  var pastOpenUid = null;
   var unsubUsers = null;
   var unsubEntries = null;
-  var unsubPastEntries = null;
   var unsubArchives = null;
+  var unsubHistoryEntries = null;
+  var unsubAudit = null;
+  var historyEntryDocs = [];
   var archiveDocs = [];
+  var auditDocs = [];
 
   function usersCol() { return db.collection("users"); }
   function entryRefFor(uid, dateStr) { return db.collection("entries").doc(entryId(uid, dateStr)); }
@@ -26,9 +24,9 @@
       users = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
       users.sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
       render();
+      renderEmployees();
       populatePeriodEmployeeDropdown();
-      populatePastEmployeeDropdown();
-      renderPastDays();
+      populateAuditEmployeeDropdown();
     }, function (err) { console.error("users snapshot error", err); });
   }
 
@@ -49,20 +47,18 @@
     }
   }
 
-  function populatePastEmployeeDropdown() {
-    var select = document.getElementById("pastEmployee");
+  function populateAuditEmployeeDropdown() {
+    var select = document.getElementById("auditEmployee");
     if (!select) return;
     var previousValue = select.value;
     select.innerHTML = '<option value="">All employees</option>';
     users.forEach(function (user) {
-      var opt = document.createElement("option");
-      opt.value = user.id;
-      opt.textContent = user.name;
-      select.appendChild(opt);
+      var option = document.createElement("option");
+      option.value = user.id;
+      option.textContent = user.name || user.email || "Employee";
+      select.appendChild(option);
     });
-    if (previousValue && users.some(function (u) { return u.id === previousValue; })) {
-      select.value = previousValue;
-    }
+    if (previousValue && users.some(function (user) { return user.id === previousValue; })) select.value = previousValue;
   }
 
   function subscribeEntriesForDate(dateStr) {
@@ -80,27 +76,6 @@
 
   function getEntry(uid) { return entriesByUid[uid] || emptyDay(); }
 
-  function subscribePastEntriesForDate(dateStr) {
-    if (unsubPastEntries) { unsubPastEntries(); unsubPastEntries = null; }
-    pastEntriesByUid = {};
-    pastOpenUid = null;
-    var listEl = document.getElementById("pastEmployeeList");
-    if (listEl) listEl.innerHTML = '<div class="log-empty">Loading…</div>';
-    unsubPastEntries = db.collection("entries").where("date", "==", dateStr).onSnapshot(function (snap) {
-      pastEntriesByUid = {};
-      snap.docs.forEach(function (d) {
-        var data = d.data();
-        pastEntriesByUid[data.uid] = { sessions: data.sessions || [], notes: data.notes || [], completedTodos: data.completedTodos || [] };
-      });
-      renderPastDays();
-    }, function (err) {
-      console.error("past entries snapshot error", err);
-      if (listEl) listEl.innerHTML = '<div class="log-empty">Something went wrong loading that date.</div>';
-    });
-  }
-
-  function getPastEntry(uid) { return pastEntriesByUid[uid] || emptyDay(); }
-
   // ---------- has this day already been archived? ----------
   // Used to warn admins that editing a day after it's been archived
   // won't update the saved PDF on its own — they'd need to re-run the
@@ -116,37 +91,84 @@
     }).catch(function (err) { console.error("archived check error", err); });
   }
 
-  // ---------- archives tab ----------
-  function subscribeArchives() {
+  // ---------- combined history tab ----------
+  function renderCombinedHistory() {
+    var byId = {};
+    historyEntryDocs.forEach(function (entry) {
+      byId[entry.id || entryId(entry.uid, entry.date)] = Object.assign({}, entry, { recordStatus: "Completed" });
+    });
+    archiveDocs.forEach(function (entry) {
+      byId[entry.id || entryId(entry.uid, entry.date)] = Object.assign({}, entry, { recordStatus: "Archived" });
+    });
+    var combined = Object.keys(byId).map(function (key) { return byId[key]; });
+    combined.sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
+    renderHistoryGroups(document.getElementById("historyAdminList"), combined, true);
+  }
+
+  function subscribeHistory() {
+    unsubHistoryEntries = db.collection("entries").where("date", "<", selectedDate).onSnapshot(function (snap) {
+      historyEntryDocs = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      renderCombinedHistory();
+    }, function (err) {
+      console.error("history entries snapshot error", err);
+      document.getElementById("historyAdminList").innerHTML = '<div class="log-empty">Something went wrong loading completed logs.</div>';
+    });
     unsubArchives = db.collection("archives").onSnapshot(function (snap) {
       archiveDocs = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
-      renderArchiveGroups(document.getElementById("archivesList"), archiveDocs, true);
+      renderCombinedHistory();
     }, function (err) {
       console.error("archives snapshot error", err);
-      var listEl = document.getElementById("archivesList");
-      if (listEl) listEl.innerHTML = '<div class="log-empty">Something went wrong loading the archives.</div>';
+      var listEl = document.getElementById("historyAdminList");
+      if (listEl) listEl.innerHTML = '<div class="log-empty">Something went wrong loading archived copies.</div>';
+    });
+  }
+
+  // ---------- audit log ----------
+  function auditCol() { return db.collection("auditLogs"); }
+  function writeAudit(action, targetUser, dateStr, detail) {
+    return auditCol().add({
+      actorUid: currentUser.uid,
+      actorName: currentProfile.name || currentProfile.email || "Admin",
+      targetUid: targetUser.id,
+      targetName: targetUser.name || targetUser.email || "Employee",
+      date: dateStr || "",
+      action: action,
+      detail: detail || "",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdAtIso: new Date().toISOString()
+    }).catch(function (err) { console.error("audit write error", err); });
+  }
+  function subscribeAudit() {
+    unsubAudit = auditCol().orderBy("createdAt", "desc").limit(250).onSnapshot(function (snap) {
+      auditDocs = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      renderAudit();
+    }, function (err) {
+      console.error("audit snapshot error", err);
+      document.getElementById("auditList").innerHTML = '<div class="log-empty">The audit log could not load. Publish the updated Firestore rules, then try again.</div>';
     });
   }
 
   function switchTab(tab) {
     var panels = {
       today: document.getElementById("todayTab"),
-      pastdays: document.getElementById("pastDaysTab"),
+      history: document.getElementById("historyTab"),
       payperiod: document.getElementById("payPeriodTab"),
-      archives: document.getElementById("archivesTab")
+      employees: document.getElementById("employeesTab"),
+      audit: document.getElementById("auditTab")
     };
     var buttons = {
       today: document.getElementById("tabTodayBtn"),
-      pastdays: document.getElementById("tabPastDaysBtn"),
+      history: document.getElementById("tabHistoryBtn"),
       payperiod: document.getElementById("tabPayPeriodBtn"),
-      archives: document.getElementById("tabArchivesBtn")
+      employees: document.getElementById("tabEmployeesBtn"),
+      audit: document.getElementById("tabAuditBtn")
     };
     Object.keys(panels).forEach(function (key) {
       panels[key].style.display = key === tab ? "block" : "none";
       buttons[key].classList.toggle("active", key === tab);
     });
-    if (tab === "pastdays" && !unsubPastEntries) subscribePastEntriesForDate(pastSelectedDate);
-    if (tab === "archives" && !unsubArchives) subscribeArchives();
+    if (tab === "history" && !unsubArchives) subscribeHistory();
+    if (tab === "audit" && !unsubAudit) subscribeAudit();
   }
 
   // ---------- pay period tab ----------
@@ -155,12 +177,12 @@
 
   function defaultPeriodRange() {
     // Monday through today, this week.
-    var today = new Date();
+    var today = parseLocalDate(selectedDate);
     var day = today.getDay(); // 0 = Sunday
     var diffToMonday = day === 0 ? 6 : day - 1;
     var monday = new Date(today);
     monday.setDate(today.getDate() - diffToMonday);
-    return { start: localDateStr(monday), end: localDateStr(today) };
+    return { start: localDateStr(monday), end: selectedDate };
   }
 
   function calcPayPeriod() {
@@ -269,17 +291,22 @@
     if (user.id === currentUser.uid && newRole === "employee") {
       if (!confirm("Remove your own admin access? You'll lose access to this dashboard.")) return;
     }
-    usersCol().doc(user.id).update({ role: newRole });
+    usersCol().doc(user.id).update({ role: newRole }).then(function () {
+      return writeAudit("role_changed", user, "", "Changed access from " + (user.role || "employee") + " to " + newRole + ".");
+    });
   }
 
   // ---------- editing an employee's entry (admin correction) ----------
-  function saveEntry(uid, name, dateStr, data) {
-    return entryRefFor(uid, dateStr).set({ uid: uid, name: name, date: dateStr, sessions: data.sessions, notes: data.notes, completedTodos: data.completedTodos || [] });
+  function saveEntry(uid, name, dateStr, data, auditAction, auditDetail) {
+    return entryRefFor(uid, dateStr).set({ uid: uid, name: name, date: dateStr, sessions: data.sessions, notes: data.notes, completedTodos: data.completedTodos || [] })
+      .then(function () {
+        if (auditAction) return writeAudit(auditAction, { id: uid, name: name }, dateStr, auditDetail);
+      });
   }
   function doDeleteNote(user, idx) {
     var data = clone(getEntry(user.id));
-    data.notes.splice(idx, 1);
-    saveEntry(user.id, user.name, selectedDate, data);
+    var removed = data.notes.splice(idx, 1)[0];
+    saveEntry(user.id, user.name, selectedDate, data, "note_deleted", "Deleted note: " + ((removed && removed.text) || "(blank note)"));
   }
   function doEditNote(user, idx, newText, timeVal) {
     var data = clone(getEntry(user.id));
@@ -288,12 +315,12 @@
     newText = newText.trim();
     if (newText) note.text = newText;
     if (timeVal) note.time = fromTimeInputValue(selectedDate, timeVal);
-    saveEntry(user.id, user.name, selectedDate, data);
+    saveEntry(user.id, user.name, selectedDate, data, "note_edited", "Edited a work note at " + (timeVal || timeInputValue(note.time)) + " CT.");
   }
   function doDeleteCompletedTodo(user, idx) {
     var data = clone(getEntry(user.id));
-    (data.completedTodos || []).splice(idx, 1);
-    saveEntry(user.id, user.name, selectedDate, data);
+    var removed = (data.completedTodos || []).splice(idx, 1)[0];
+    saveEntry(user.id, user.name, selectedDate, data, "completed_task_deleted", "Deleted completed task: " + ((removed && removed.text) || "(blank task)"));
   }
   function doEditCompletedTodo(user, idx, newText, timeVal) {
     var data = clone(getEntry(user.id));
@@ -302,19 +329,21 @@
     newText = newText.trim();
     if (newText) ct.text = newText;
     if (timeVal) ct.completedAt = fromTimeInputValue(selectedDate, timeVal);
-    saveEntry(user.id, user.name, selectedDate, data);
+    saveEntry(user.id, user.name, selectedDate, data, "completed_task_edited", "Edited a completed task at " + (timeVal || timeInputValue(ct.completedAt)) + " CT.");
   }
   function doDeleteSession(user, idx) {
     var data = clone(getEntry(user.id));
-    data.sessions.splice(idx, 1);
-    saveEntry(user.id, user.name, selectedDate, data);
+    var removed = data.sessions.splice(idx, 1)[0];
+    var summary = removed ? ((removed.clockIn ? "in " + fmtTime(removed.clockIn) : "no clock-in") + ", " + (removed.clockOut ? "out " + fmtTime(removed.clockOut) : "no clock-out")) : "punch";
+    saveEntry(user.id, user.name, selectedDate, data, "punch_deleted", "Deleted punch (" + summary + ").");
   }
   function doEditSession(user, idx, field, timeVal) {
     var data = clone(getEntry(user.id));
     var sess = data.sessions[idx];
     if (!sess) return;
+    var oldValue = sess[field];
     sess[field] = fromTimeInputValue(selectedDate, timeVal);
-    saveEntry(user.id, user.name, selectedDate, data);
+    saveEntry(user.id, user.name, selectedDate, data, "punch_edited", "Changed " + (field === "clockIn" ? "clock-in" : "clock-out") + " from " + fmtTime(oldValue) + " to " + fmtTime(sess[field]) + " CT.");
   }
 
   // ---------- rendering ----------
@@ -358,14 +387,7 @@
       var total = document.createElement("span");
       total.className = "etotal";
       total.textContent = fmtDuration(totalMinutesFor(data));
-      var roleBtn = document.createElement("button");
-      roleBtn.className = "btn secondary";
-      roleBtn.style.padding = "5px 10px";
-      roleBtn.style.fontSize = "13px";
-      roleBtn.textContent = user.role === "admin" ? "Remove admin" : "Make admin";
-      roleBtn.onclick = function () { toggleRole(user); };
       right.appendChild(total);
-      right.appendChild(roleBtn);
 
       row.appendChild(left);
       row.appendChild(right);
@@ -380,57 +402,96 @@
     });
   }
 
-  function renderPastDays() {
-    var listEl = document.getElementById("pastEmployeeList");
-    var employeeSelect = document.getElementById("pastEmployee");
-    if (!listEl || !employeeSelect) return;
+  function renderEmployees() {
+    var listEl = document.getElementById("employeesList");
+    if (!listEl) return;
     listEl.innerHTML = "";
-
-    var selectedUid = employeeSelect.value;
-    var visibleUsers = selectedUid
-      ? users.filter(function (user) { return user.id === selectedUid; })
-      : users;
-
-    if (visibleUsers.length === 0) {
-      listEl.innerHTML = '<div class="log-empty">No employees found.</div>';
+    if (!users.length) {
+      listEl.innerHTML = '<div class="log-empty">No employees yet.</div>';
       return;
     }
-
-    visibleUsers.forEach(function (user) {
-      var data = getPastEntry(user.id);
-      var hasEntries = (data.sessions && data.sessions.length) || (data.notes && data.notes.length) || (data.completedTodos && data.completedTodos.length);
+    users.forEach(function (user) {
       var row = document.createElement("div");
-      row.className = "employee-row";
-      row.onclick = function (e) {
-        if (e.target.closest("button")) return;
-        pastOpenUid = pastOpenUid === user.id ? null : user.id;
-        renderPastDays();
-      };
+      row.className = "employee-management-row";
+      var identity = document.createElement("div");
+      var name = document.createElement("div");
+      name.className = "ename";
+      name.textContent = user.name || "Employee";
+      var email = document.createElement("div");
+      email.className = "eemail";
+      email.textContent = user.email || "";
+      identity.appendChild(name);
+      identity.appendChild(email);
 
-      var left = document.createElement("div");
-      var nameLine = document.createElement("div");
-      nameLine.className = "ename";
-      nameLine.textContent = user.name;
-      var emailLine = document.createElement("div");
-      emailLine.className = "eemail";
-      emailLine.textContent = user.email || "";
-      left.appendChild(nameLine);
-      left.appendChild(emailLine);
-
-      var total = document.createElement("span");
-      total.className = "etotal";
-      total.textContent = hasEntries ? fmtDuration(totalMinutesFor(data)) : "No entries";
-
-      row.appendChild(left);
-      row.appendChild(total);
+      var controls = document.createElement("div");
+      controls.className = "employee-access-controls";
+      var badge = document.createElement("span");
+      badge.className = "access-badge " + (user.role === "admin" ? "admin" : "employee");
+      badge.textContent = user.role === "admin" ? "Administrator" : "Employee";
+      var roleBtn = document.createElement("button");
+      roleBtn.className = "btn secondary compact-btn";
+      roleBtn.textContent = user.role === "admin" ? "Remove admin" : "Make admin";
+      roleBtn.onclick = function () { toggleRole(user); };
+      controls.appendChild(badge);
+      controls.appendChild(roleBtn);
+      row.appendChild(identity);
+      row.appendChild(controls);
       listEl.appendChild(row);
+    });
+  }
 
+  function auditActionLabel(action) {
+    var labels = {
+      clock_in: "Clocked in",
+      clock_out: "Clocked out",
+      punch_added: "Punch added",
+      punch_edited: "Punch edited",
+      punch_deleted: "Punch deleted",
+      note_added: "Note added",
+      note_edited: "Note edited",
+      note_deleted: "Note deleted",
+      completed_task_added: "Task completed",
+      completed_task_edited: "Completed task edited",
+      completed_task_deleted: "Completed task deleted",
+      role_changed: "Access changed"
+    };
+    return labels[action] || String(action || "Change").replace(/_/g, " ");
+  }
+
+  function renderAudit() {
+    var listEl = document.getElementById("auditList");
+    var select = document.getElementById("auditEmployee");
+    if (!listEl || !select) return;
+    var selectedUid = select.value;
+    var visible = selectedUid ? auditDocs.filter(function (item) { return item.targetUid === selectedUid; }) : auditDocs;
+    var summary = document.getElementById("auditFilterSummary");
+    if (summary) summary.textContent = visible.length + (visible.length === 1 ? " recorded change" : " recorded changes");
+    listEl.innerHTML = "";
+    if (!visible.length) {
+      listEl.innerHTML = '<div class="archive-empty">No changes have been recorded for this selection yet.</div>';
+      return;
+    }
+    visible.forEach(function (item) {
+      var row = document.createElement("div");
+      row.className = "audit-row";
+      var top = document.createElement("div");
+      top.className = "audit-row-top";
+      var action = document.createElement("strong");
+      action.textContent = auditActionLabel(item.action);
+      var when = document.createElement("span");
+      when.textContent = fmtDateTimeCentral(item.createdAt || item.createdAtIso);
+      top.appendChild(action);
+      top.appendChild(when);
+      var meta = document.createElement("div");
+      meta.className = "audit-meta";
+      meta.textContent = (item.actorName || "User") + " changed " + (item.targetName || "Employee") + (item.date ? " · " + fmtHeaderDate(item.date) : "");
       var detail = document.createElement("div");
-      detail.className = "detail-panel" + (pastOpenUid === user.id ? " open" : "");
-      if (pastOpenUid === user.id) {
-        detail.appendChild(renderDetail(user, data, true, pastSelectedDate));
-      }
-      listEl.appendChild(detail);
+      detail.className = "audit-detail";
+      detail.textContent = item.detail || "No additional details.";
+      row.appendChild(top);
+      row.appendChild(meta);
+      row.appendChild(detail);
+      listEl.appendChild(row);
     });
   }
 
@@ -553,7 +614,7 @@
       var currentIso = sess[field];
       var input = document.createElement("input");
       input.type = "time";
-      input.value = currentIso ? new Date(currentIso).toTimeString().slice(0, 5) : "";
+      input.value = timeInputValue(currentIso);
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
       var box = document.createElement("div");
@@ -606,7 +667,7 @@
 
       var timeInput = document.createElement("input");
       timeInput.type = "time";
-      timeInput.value = currentTimeIso ? new Date(currentTimeIso).toTimeString().slice(0, 5) : "";
+      timeInput.value = timeInputValue(currentTimeIso);
 
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
@@ -667,7 +728,7 @@
 
       var timeInput = document.createElement("input");
       timeInput.type = "time";
-      timeInput.value = currentTimeIso ? new Date(currentTimeIso).toTimeString().slice(0, 5) : "";
+      timeInput.value = timeInputValue(currentTimeIso);
 
       var saveBtn = document.createElement("button");
       saveBtn.textContent = "Save";
@@ -698,32 +759,15 @@
 
   function wireHandlers() {
     document.getElementById("todayDateLabel").textContent = fmtHeaderDate(selectedDate);
-
-    var pastDatePicker = document.getElementById("pastDatePicker");
-    pastDatePicker.value = pastSelectedDate;
-    pastDatePicker.max = pastSelectedDate;
-    pastDatePicker.onchange = function () {
-      if (!pastDatePicker.value) return;
-      if (pastDatePicker.value >= localDateStr(new Date())) {
-        alert("Choose a date before today. Today's logs are on the Today tab.");
-        pastDatePicker.value = pastSelectedDate;
-        return;
-      }
-      pastSelectedDate = pastDatePicker.value;
-      subscribePastEntriesForDate(pastSelectedDate);
-    };
-    document.getElementById("pastEmployee").onchange = function () {
-      pastOpenUid = null;
-      renderPastDays();
-    };
     document.getElementById("signOutBtn").onclick = function () { signOutUser(); };
     document.getElementById("tabTodayBtn").onclick = function () { switchTab("today"); };
-    document.getElementById("tabPastDaysBtn").onclick = function () { switchTab("pastdays"); };
+    document.getElementById("tabHistoryBtn").onclick = function () { switchTab("history"); };
     document.getElementById("tabPayPeriodBtn").onclick = function () { switchTab("payperiod"); };
-    document.getElementById("tabArchivesBtn").onclick = function () { switchTab("archives"); };
-    document.getElementById("archiveEmployee").onchange = function () {
-      renderArchiveGroups(document.getElementById("archivesList"), archiveDocs, true);
-    };
+    document.getElementById("tabEmployeesBtn").onclick = function () { switchTab("employees"); };
+    document.getElementById("tabAuditBtn").onclick = function () { switchTab("audit"); };
+    document.getElementById("historyEmployee").onchange = renderCombinedHistory;
+    document.getElementById("historyMonth").onchange = renderCombinedHistory;
+    document.getElementById("auditEmployee").onchange = renderAudit;
 
     var defaults = defaultPeriodRange();
     document.getElementById("periodStart").value = defaults.start;
