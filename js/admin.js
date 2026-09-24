@@ -139,7 +139,9 @@
     }).catch(function (err) { console.error("audit write error", err); });
   }
   function subscribeAudit() {
-    unsubAudit = auditCol().orderBy("createdAt", "desc").limit(250).onSnapshot(function (snap) {
+    // Keep the complete private history available so month and year folders
+    // and their CSV files are never silently cut off at an arbitrary limit.
+    unsubAudit = auditCol().orderBy("createdAt", "desc").onSnapshot(function (snap) {
       auditDocs = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
       renderAudit();
     }, function (err) {
@@ -442,6 +444,7 @@
 
   function auditActionLabel(action) {
     var labels = {
+      login: "Signed in",
       clock_in: "Clocked in",
       clock_out: "Clocked out",
       punch_added: "Punch added",
@@ -471,7 +474,105 @@
       listEl.innerHTML = '<div class="archive-empty">No changes have been recorded for this selection yet.</div>';
       return;
     }
+
+    visible.sort(function (a, b) { return auditEventTime(b).getTime() - auditEventTime(a).getTime(); });
+    var byYear = {};
     visible.forEach(function (item) {
+      var day = auditEventDate(item);
+      var year = day.slice(0, 4);
+      var month = day.slice(0, 7);
+      if (!byYear[year]) byYear[year] = {};
+      if (!byYear[year][month]) byYear[year][month] = {};
+      if (!byYear[year][month][day]) byYear[year][month][day] = [];
+      byYear[year][month][day].push(item);
+    });
+
+    Object.keys(byYear).sort().reverse().forEach(function (year, yearIndex) {
+      var yearDetails = document.createElement("details");
+      yearDetails.className = "audit-year";
+      yearDetails.open = yearIndex === 0;
+      var yearItems = auditItemsFromGroups(byYear[year]);
+      yearDetails.appendChild(makeAuditFolderSummary(year, yearItems.length + (yearItems.length === 1 ? " event" : " events"), "audit-year-summary"));
+
+      var yearContent = document.createElement("div");
+      yearContent.className = "audit-year-content";
+      var yearButton = document.createElement("button");
+      yearButton.className = "btn audit-download-btn";
+      yearButton.textContent = "Download " + year + " year file (CSV)";
+      yearButton.onclick = function () { exportAuditCsv("audit-log-" + year + ".csv", "Audit Log — " + year, yearItems); };
+      yearContent.appendChild(yearButton);
+
+      Object.keys(byYear[year]).sort().reverse().forEach(function (month, monthIndex) {
+        var monthDetails = document.createElement("details");
+        monthDetails.className = "audit-month";
+        monthDetails.open = yearIndex === 0 && monthIndex === 0;
+        var monthItems = auditItemsFromGroups(byYear[year][month]);
+        monthDetails.appendChild(makeAuditFolderSummary(fmtMonthLabel(month), monthItems.length + (monthItems.length === 1 ? " event" : " events"), "audit-month-summary"));
+
+        var monthContent = document.createElement("div");
+        monthContent.className = "audit-month-content";
+        var monthButton = document.createElement("button");
+        monthButton.className = "btn secondary audit-download-btn";
+        monthButton.textContent = "Download " + fmtMonthLabel(month) + " month file (CSV)";
+        monthButton.onclick = function () { exportAuditCsv("audit-log-" + month + ".csv", "Audit Log — " + fmtMonthLabel(month), monthItems); };
+        monthContent.appendChild(monthButton);
+
+        Object.keys(byYear[year][month]).sort().reverse().forEach(function (day, dayIndex) {
+          var dayDetails = document.createElement("details");
+          dayDetails.className = "audit-day";
+          dayDetails.open = yearIndex === 0 && monthIndex === 0 && dayIndex === 0;
+          var dayItems = byYear[year][month][day];
+          dayDetails.appendChild(makeAuditFolderSummary(fmtHeaderDate(day), dayItems.length + (dayItems.length === 1 ? " event" : " events"), "audit-day-summary"));
+          var dayContent = document.createElement("div");
+          dayContent.className = "audit-day-content";
+          dayItems.forEach(function (item) { dayContent.appendChild(buildAuditRow(item)); });
+          dayDetails.appendChild(dayContent);
+          monthContent.appendChild(dayDetails);
+        });
+
+        monthDetails.appendChild(monthContent);
+        yearContent.appendChild(monthDetails);
+      });
+
+      yearDetails.appendChild(yearContent);
+      listEl.appendChild(yearDetails);
+    });
+  }
+
+  function auditEventTime(item) {
+    var value = item.createdAt || item.createdAtIso;
+    var date = value && typeof value.toDate === "function" ? value.toDate() : new Date(value || 0);
+    return Number.isNaN(date.getTime()) ? new Date(0) : date;
+  }
+
+  function auditEventDate(item) {
+    return localDateStr(auditEventTime(item));
+  }
+
+  function auditItemsFromGroups(groups) {
+    var items = [];
+    Object.keys(groups).forEach(function (key) {
+      if (Array.isArray(groups[key])) items = items.concat(groups[key]);
+      else items = items.concat(auditItemsFromGroups(groups[key]));
+    });
+    return items.sort(function (a, b) { return auditEventTime(b).getTime() - auditEventTime(a).getTime(); });
+  }
+
+  function makeAuditFolderSummary(titleText, countText, className) {
+    var summary = document.createElement("summary");
+    summary.className = className;
+    var title = document.createElement("span");
+    title.className = "audit-folder-title";
+    title.textContent = titleText;
+    var count = document.createElement("span");
+    count.className = "audit-folder-count";
+    count.textContent = countText;
+    summary.appendChild(title);
+    summary.appendChild(count);
+    return summary;
+  }
+
+  function buildAuditRow(item) {
       var row = document.createElement("div");
       row.className = "audit-row";
       var top = document.createElement("div");
@@ -484,15 +585,36 @@
       top.appendChild(when);
       var meta = document.createElement("div");
       meta.className = "audit-meta";
-      meta.textContent = (item.actorName || "User") + " changed " + (item.targetName || "Employee") + (item.date ? " · " + fmtHeaderDate(item.date) : "");
+      meta.textContent = item.action === "login"
+        ? (item.actorName || "User") + " signed in"
+        : (item.actorName || "User") + " changed " + (item.targetName || "Employee") + (item.date ? " · " + fmtHeaderDate(item.date) : "");
       var detail = document.createElement("div");
       detail.className = "audit-detail";
       detail.textContent = item.detail || "No additional details.";
       row.appendChild(top);
       row.appendChild(meta);
       row.appendChild(detail);
-      listEl.appendChild(row);
+      return row;
+  }
+
+  function exportAuditCsv(filename, title, items) {
+    var rows = [
+      [title],
+      ["Times shown in Central Time (CT)"],
+      [],
+      ["Activity Time", "Action", "Performed By", "Employee", "Work Date", "Details"]
+    ];
+    items.forEach(function (item) {
+      rows.push([
+        fmtDateTimeCentral(item.createdAt || item.createdAtIso),
+        auditActionLabel(item.action),
+        item.actorName || "User",
+        item.targetName || "Employee",
+        item.date ? fmtHeaderDate(item.date) : "",
+        item.detail || ""
+      ]);
     });
+    downloadCsvFile(filename, rows);
   }
 
   function renderDetail(user, data, readOnly, dateStr) {

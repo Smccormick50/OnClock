@@ -45,8 +45,31 @@ async function signUp(email, password, name) {
   }
 }
 
-function signIn(email, password) {
-  return auth.signInWithEmailAndPassword(email, password);
+async function signIn(email, password) {
+  const cred = await auth.signInWithEmailAndPassword(email, password);
+
+  // A successful password sign-in is recorded for the admin Audit Log.
+  // This is deliberately best-effort: if the audit write is temporarily
+  // offline or the new Firestore rules have not been published yet, the
+  // employee still gets signed in normally.
+  try {
+    const profile = await ensureUserDoc(cred.user);
+    await db.collection("auditLogs").add({
+      actorUid: cred.user.uid,
+      actorName: profile.name || cred.user.email || "Employee",
+      targetUid: cred.user.uid,
+      targetName: profile.name || cred.user.email || "Employee",
+      date: localDateStr(new Date()),
+      action: "login",
+      detail: "Signed in with email and password.",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdAtIso: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error("login audit error", err);
+  }
+
+  return cred;
 }
 
 function signOutUser() {
