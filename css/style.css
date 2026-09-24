@@ -116,6 +116,12 @@ header.top .links a, header.top .links button {
 .punch-btn.in { background: var(--brass); color: #241B0A; }
 .punch-btn.out { background: var(--punch-red); color: #FBEDE8; }
 .punch-btn:disabled { opacity: 0.55; cursor: default; }
+.clock-time-zone {
+  color: rgba(255,255,255,0.72);
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 12px;
+  margin-top: 4px;
+}
 
 .panel {
   background: var(--paper-raised);
@@ -210,6 +216,23 @@ header.top .links a, header.top .links button {
 .edit-link { background: none; border: none; color: var(--ink-soft); text-decoration: underline; font-size: 12px; cursor: pointer; padding: 0; margin-left: 8px; }
 
 .export-row { display: flex; justify-content: flex-end; margin-top: 12px; gap: 8px; }
+.time-zone-note { color: var(--ink-soft); font-size: 12px; margin: -5px 0 10px; }
+.manual-punch {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--pine-tint);
+  margin: 8px 0 14px;
+}
+.manual-punch summary {
+  color: var(--pine);
+  cursor: pointer;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 10px 12px;
+}
+.manual-punch-body { border-top: 1px solid var(--line); padding: 12px; }
+.manual-punch-body .mileage-row { margin-bottom: 8px; }
 
 /* auth form — full green page, centered white card, like Mc Racking's login */
 .auth-screen {
@@ -300,6 +323,29 @@ header.top .links a, header.top .links button {
   padding: 1px 6px;
   margin-left: 8px;
 }
+.employee-management-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.employee-management-row .ename { color: var(--pine); font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 700; }
+.employee-management-row .eemail { color: var(--ink-soft); font-size: 13px; }
+.employee-access-controls { display: flex; align-items: center; gap: 10px; }
+.access-badge, .history-status {
+  border-radius: 999px;
+  display: inline-block;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.access-badge.admin, .history-status.archived { background: #dceadf; color: #146c43; }
+.access-badge.employee, .history-status.completed { background: #fff1c7; color: #7a5800; }
+.compact-btn { font-size: 13px; padding: 6px 10px; }
 .date-picker-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .date-picker-row input[type="date"] {
   padding: 8px 10px;
@@ -531,6 +577,12 @@ header.top .links a, header.top .links button {
 .archive-timeline-type { font-weight: 600; }
 .archive-timeline-detail { min-width: 0; overflow-wrap: anywhere; }
 .archive-day-empty { color: var(--ink-soft); font-style: italic; padding-top: 4px; }
+.audit-row { border-bottom: 1px dashed var(--line); padding: 12px 2px; }
+.audit-row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.audit-row-top strong { color: var(--pine); font-family: 'Barlow Condensed', sans-serif; font-size: 17px; }
+.audit-row-top span { color: var(--ink-soft); font-family: 'Space Mono', monospace; font-size: 11px; text-align: right; }
+.audit-meta { color: var(--ink-soft); font-size: 13px; margin-top: 2px; }
+.audit-detail { font-size: 14px; margin-top: 5px; overflow-wrap: anywhere; }
 
 /* Hover feedback — only for devices with a real pointer, so touch
    screens don't get a "stuck" hover state after tapping. */
@@ -556,6 +608,9 @@ header.top .links a, header.top .links button {
   .archive-filter-row label { width: 100%; }
   .archive-filter-row select { min-width: 0; width: 100%; }
   .archive-filter-summary { margin-left: 0; width: 100%; }
+  .employee-management-row, .employee-access-controls { align-items: flex-start; flex-direction: column; }
+  .audit-row-top { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .audit-row-top span { text-align: left; }
 }
 
 /* Desktop: a bit more breathing room than the mobile-first column
