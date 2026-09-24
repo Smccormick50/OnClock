@@ -4,7 +4,7 @@ Static site: `index.html` (employee clock) + `admin.html` (admin
 dashboard), backed by Firebase Auth (email/password) and Firestore
 only — no Firebase Storage, no Cloud Functions, no Blaze plan needed.
 Push `index.html`, `admin.html`, `css/`, and `js/` as-is to GitHub
-Pages. The 11:59pm archiving job runs as a free GitHub Actions
+Pages. The after-midnight archiving job runs as a free GitHub Actions
 scheduled workflow instead of a paid Firebase Cloud Function.
 
 ## 1. Create the Firebase project
@@ -30,7 +30,8 @@ scheduled workflow instead of a paid Firebase Cloud Function.
 
 The rules in `firestore.rules` keep each employee's data private to
 them, while letting anyone whose `users/{uid}` doc has `role: "admin"`
-read and edit everyone's data. The `archives` collection is
+read and edit everyone's data. Audit records are append-only and only
+admins can review everyone's changes. The `archives` collection is
 read-only from the browser — it's only ever written by the GitHub
 Actions script below, using an admin service account that bypasses
 these rules entirely.
@@ -65,14 +66,15 @@ someone. So for the very first admin:
 2. In the Firebase console, go to **Firestore Database > Data**, open
    the `users` collection, find the document with your `uid`, and
    change its `role` field from `employee` to `admin`.
-3. Reload `admin.html` — you're in. From there you can promote or
-   demote anyone else's role right from the admin dashboard, no more
+3. Reload `admin.html` — you're in. From the **Employees** tab you can
+   promote or demote anyone else's role, with every change recorded in
+   the Audit Log. No more
    manual editing needed.
 
 ## 4. Set up the nightly archive (GitHub Actions)
 
-This is the piece that saves each employee's day into the `archives`
-collection at 11:59pm, whether or not anyone has the app open.
+This saves each completed employee day into the `archives` collection
+shortly after midnight, whether or not anyone has the app open.
 
 1. **Get a service account key.** In the Firebase console: gear icon
    → **Project settings** → **Service accounts** tab → **Generate new
@@ -83,18 +85,16 @@ collection at 11:59pm, whether or not anyone has the app open.
    variables > Actions > New repository secret**. Name it
    `FIREBASE_SERVICE_ACCOUNT`, and paste the *entire contents* of the
    `.json` file you downloaded as the value.
-3. That's it — `.github/workflows/archive-daily.yml` is already set
-   up to run `scripts/archive-daily.js` once an hour, and the script
-   itself only actually does anything during the 11pm hour (in
-   `America/Chicago` by default — change the `TIME_ZONE` constant near
-   the top of `scripts/archive-daily.js` if your team is elsewhere).
-4. **To test it without waiting for 11pm — or to refresh an already-archived day:**
+3. That's it — `.github/workflows/archive-daily.yml` runs shortly after
+   midnight Central and archives the completed previous day. Change the
+   `TIME_ZONE` constant near the top of `scripts/archive-daily.js` if
+   your team is elsewhere.
+4. **To test it or refresh an already-archived day:**
    push the repo, then on GitHub go to the **Actions** tab → **Archive
-   daily logs** → **Run workflow**. Leave the **date** field blank to
-   archive today right now; fill it in (YYYY-MM-DD) to (re-)archive
-   that specific date instead — e.g. after correcting a punch on a day
-   that already has a saved PDF, since the nightly job only ever
-   touches "today" on its own. The admin dashboard flags this: opening
+   daily logs** → **Run workflow**. Leave **date** blank to archive
+   yesterday, or fill it in (YYYY-MM-DD) to (re-)archive that date.
+   Entering today's date creates an "up to now" snapshot without
+   clocking the employee out. The admin dashboard flags this: opening
    an employee's detail view for a day that's already archived shows a
    note reminding you to re-run it for that date after making changes.
 
@@ -125,10 +125,10 @@ collection at 11:59pm, whether or not anyone has the app open.
 - `css/style.css` — shared styling
 - `js/firebase-config.js` — your project keys (edit this)
 - `js/auth.js` — sign up / sign in / sign out / profile lookup
-- `js/timeutils.js` — date, time, and duration formatting shared by both pages
+- `js/timeutils.js` — Central Time conversion plus date, time, and duration formatting shared by both pages
 - `js/pdfexport.js` — builds a PDF in the browser and downloads it
 - `js/csvexport.js` — same idea, as a CSV: a single day, or a whole pay-period range with per-employee totals
-- `js/archives.js` — renders the saved nightly logs, grouped by month, with PDF and CSV download on each
+- `js/archives.js` — renders combined completed/archived history, grouped by month, with PDF and CSV download on each
 - `js/authform.js` — wires up the login/signup form on `index.html`
 - `js/employee.js` — the clock in/out + notes logic on `index.html`
 - `js/admin.js` — the admin dashboard on `admin.html`
@@ -136,12 +136,27 @@ collection at 11:59pm, whether or not anyone has the app open.
 - `sw.js` — caches the app's own files for offline/instant loading (leaves Firebase and CDN requests alone)
 - `manifest.json` — makes the site installable ("Add to Home Screen" on iOS, "Install app" on desktop)
 - `icons/` — the app icon at the sizes iOS/Android/desktop each expect
-- `firestore.rules` — security rules (each user's own data, plus admin override; archives are read-only from the browser)
+- `firestore.rules` — security rules (each user's own data, admin override, read-only archives, and append-only audit records)
 - `firestore.indexes.json` — the one composite index the "Past days" query needs
 - `scripts/archive-daily.js` — the nightly archive job, run by GitHub Actions
-- `.github/workflows/archive-daily.yml` — schedules that script hourly (it self-gates to the 11pm hour) and lets you trigger it manually to test
+- `.github/workflows/archive-daily.yml` — schedules the after-midnight archive and lets you trigger it manually to test or refresh a date
 
 ## Recent additions
+
+- **Cleaner employee Log screen** — the daily log and total appear first,
+  manual punch corrections are tucked into a collapsible control, and work
+  notes and to-dos follow underneath.
+- **One admin History tab** — the older Past Days Logs and Archives screens
+  are combined. Admins can filter by employee and month, review any day,
+  and download PDF or CSV copies without editing historical records.
+- **Separate Employees tab** — role/access controls no longer compete with
+  today's time records.
+- **Audit Log** — clock changes, manual punches, note/completed-task edits,
+  deletions, and administrator access changes are recorded with actor,
+  employee, date, details, and timestamp.
+- **Central Time everywhere** — the live clock, punch editors, history,
+  exports, and Audit Log all use `America/Chicago`, including automatic
+  daylight-saving changes.
 
 - **Renamed to OnClock**, with a new green-and-yellow clock icon
   (`icons/`). Every title, header, and the manifest now say OnClock
@@ -191,7 +206,8 @@ collection at 11:59pm, whether or not anyone has the app open.
 
 - `users/{uid}` — `{ name, email, role: "employee" | "admin" }`
 - `entries/{uid}_{YYYY-MM-DD}` — `{ uid, name, date, sessions: [{clockIn, clockOut}], notes: [{time, text}] }` — today's live, editable log
-- `archives/{uid}_{YYYY-MM-DD}` — `{ uid, name, date, month, sessions, notes, totalMinutes, archivedAt }` — a frozen copy of a past day, written once at 11:59pm
+- `archives/{uid}_{YYYY-MM-DD}` — `{ uid, name, date, month, sessions, notes, totalMinutes, archivedAt }` — a frozen copy of a completed day, normally written shortly after midnight
+- `auditLogs/{autoId}` — append-only `{ actorUid, actorName, targetUid, targetName, date, action, detail, createdAt }` change history
 
 ## How the two kinds of PDF differ
 
@@ -203,7 +219,7 @@ file. The difference is just which data feeds it:
   on each employee's row in the admin dashboard. Builds a PDF from
   today's *live* entry, whatever's logged so far.
 - **Archives "View PDF"** — builds the same kind of PDF, but from the
-  *frozen* copy saved at 11:59pm that night. Grouped by month under
+  *frozen* copy saved after the day ends. Grouped by month under
   the **Archives** tab (admin) or **My archived logs** (employee).
 
 ## Notes

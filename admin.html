@@ -48,30 +48,35 @@
 
   <div class="tab-row">
     <button class="tab-btn active" id="tabTodayBtn">Today</button>
-    <button class="tab-btn" id="tabPastDaysBtn">Past Days Logs</button>
+    <button class="tab-btn" id="tabHistoryBtn">History</button>
     <button class="tab-btn" id="tabPayPeriodBtn">Pay Period</button>
-    <button class="tab-btn" id="tabArchivesBtn">Archives</button>
+    <button class="tab-btn" id="tabEmployeesBtn">Employees</button>
+    <button class="tab-btn" id="tabAuditBtn">Audit Log</button>
   </div>
 
   <div class="panel" id="todayTab">
     <h2>Today's employee logs <span class="total" id="todayDateLabel"></span></h2>
+    <p class="time-zone-note">All times are shown in Central Time (CT).</p>
     <div id="employeeList"><div class="log-empty">Loading…</div></div>
   </div>
 
-  <div class="panel" id="pastDaysTab" style="display:none;">
-    <h2 style="margin-bottom:6px;">Past days logs</h2>
-    <p class="status-note" style="margin-bottom:14px;">
-      Read-only history. Admins can view and export past logs, but cannot edit or delete them here.
-    </p>
-    <div class="date-picker-row">
-      <label for="pastDatePicker" style="font-family:'Barlow Condensed', sans-serif; font-weight:600; color:var(--pine);">Date:</label>
-      <input type="date" id="pastDatePicker">
-      <label for="pastEmployee" style="font-family:'Barlow Condensed', sans-serif; font-weight:600; color:var(--pine);">Employee:</label>
-      <select id="pastEmployee">
-        <option value="">All employees</option>
-      </select>
+  <div class="panel" id="historyTab" style="display:none;">
+    <div class="archive-heading-row">
+      <h2>Employee history</h2>
+      <span class="archive-live-badge">Read only</span>
     </div>
-    <div id="pastEmployeeList"><div class="log-empty">Choose a past date.</div></div>
+    <p class="archive-intro">
+      Completed daily logs and archived copies are together in one place. Filter by employee or month,
+      open a day to review it, or download PDF and CSV copies. Times are Central Time (CT).
+    </p>
+    <div class="archive-filter-row">
+      <label for="historyEmployee">Employee</label>
+      <select id="historyEmployee"><option value="">All employees</option></select>
+      <label for="historyMonth">Month</label>
+      <select id="historyMonth"><option value="">All months</option></select>
+      <span id="historyFilterSummary" class="archive-filter-summary">Loading history…</span>
+    </div>
+    <div id="historyAdminList"><div class="log-empty">Loading…</div></div>
   </div>
 
   <div class="panel" id="payPeriodTab" style="display:none;">
@@ -93,23 +98,21 @@
     </div>
   </div>
 
-  <div class="panel" id="archivesTab" style="display:none;">
-    <div class="archive-heading-row">
-      <h2>Archived daily logs</h2>
-      <span class="archive-live-badge">● Live</span>
-    </div>
-    <p class="archive-intro">
-      Past daily logs are grouped by month. Open a month to view employee logs,
-      see the hours worked, or download PDF and CSV copies. Archives are read-only.
-    </p>
+  <div class="panel" id="employeesTab" style="display:none;">
+    <h2>Employees &amp; access</h2>
+    <p class="archive-intro">Manage who has administrator access here. Time entries stay on the Today and History tabs.</p>
+    <div id="employeesList"><div class="log-empty">Loading…</div></div>
+  </div>
+
+  <div class="panel" id="auditTab" style="display:none;">
+    <h2>Audit log</h2>
+    <p class="archive-intro">A read-only record of punch, note, completed-task, and access changes. Times are Central Time (CT).</p>
     <div class="archive-filter-row">
-      <label for="archiveEmployee">Employee</label>
-      <select id="archiveEmployee">
-        <option value="">All employees</option>
-      </select>
-      <span id="archiveFilterSummary" class="archive-filter-summary">Showing all employees</span>
+      <label for="auditEmployee">Employee</label>
+      <select id="auditEmployee"><option value="">All employees</option></select>
+      <span id="auditFilterSummary" class="archive-filter-summary">Loading changes…</span>
     </div>
-    <div id="archivesList"><div class="log-empty">Loading…</div></div>
+    <div id="auditList"><div class="log-empty">Open this tab to load changes.</div></div>
   </div>
 </div>
 
