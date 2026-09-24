@@ -583,6 +583,53 @@ header.top .links a, header.top .links button {
 .audit-row-top span { color: var(--ink-soft); font-family: 'Space Mono', monospace; font-size: 11px; text-align: right; }
 .audit-meta { color: var(--ink-soft); font-size: 13px; margin-top: 2px; }
 .audit-detail { font-size: 14px; margin-top: 5px; overflow-wrap: anywhere; }
+.audit-year {
+  border: 1px solid var(--pine);
+  border-radius: 9px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.audit-month {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+.audit-day {
+  border-top: 1px solid var(--line);
+  margin-top: 10px;
+}
+.audit-year-summary, .audit-month-summary, .audit-day-summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  list-style: none;
+  user-select: none;
+}
+.audit-year-summary::-webkit-details-marker,
+.audit-month-summary::-webkit-details-marker,
+.audit-day-summary::-webkit-details-marker { display: none; }
+.audit-year-summary::before, .audit-month-summary::before, .audit-day-summary::before {
+  content: "▶";
+  flex: 0 0 auto;
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+.audit-year[open] > .audit-year-summary::before,
+.audit-month[open] > .audit-month-summary::before,
+.audit-day[open] > .audit-day-summary::before { transform: rotate(90deg); }
+.audit-year-summary { background: var(--pine); color: var(--paper-raised); padding: 12px 14px; }
+.audit-month-summary { background: var(--pine-tint); color: var(--pine); padding: 10px 12px; }
+.audit-day-summary { color: var(--ink); padding: 10px 4px; }
+.audit-folder-title { flex: 1; font-family: 'Barlow Condensed', sans-serif; font-size: 17px; font-weight: 700; }
+.audit-year-summary .audit-folder-title { color: var(--brass-light); font-size: 20px; }
+.audit-folder-count { font-family: 'Space Mono', monospace; font-size: 12px; white-space: nowrap; }
+.audit-year-content { background: var(--paper-raised); padding: 12px; }
+.audit-month-content { background: #fff; padding: 10px 12px 12px; }
+.audit-day-content { background: var(--paper-raised); padding: 0 8px 6px; }
+.audit-download-btn { font-size: 14px; margin-bottom: 2px; padding: 8px 12px; }
 
 /* Hover feedback — only for devices with a real pointer, so touch
    screens don't get a "stuck" hover state after tapping. */
@@ -593,6 +640,7 @@ header.top .links a, header.top .links button {
   .employee-row:hover { background: var(--pine-tint); }
   .history-row:hover, .log-row:hover { background: var(--pine-tint); }
   .archive-month-summary:hover { background: var(--pine-tint); }
+  .audit-month-summary:hover, .audit-day-summary:hover { background: var(--pine-tint); }
   .archive-table tbody tr:not(.archive-detail-row):hover { background: var(--pine-tint); }
   .archive-action:hover { filter: brightness(1.08); }
 }
