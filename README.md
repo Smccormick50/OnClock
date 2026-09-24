@@ -151,9 +151,10 @@ shortly after midnight, whether or not anyone has the app open.
   and download PDF or CSV copies without editing historical records.
 - **Separate Employees tab** — role/access controls no longer compete with
   today's time records.
-- **Audit Log** — clock changes, manual punches, note/completed-task edits,
-  deletions, and administrator access changes are recorded with actor,
-  employee, date, details, and timestamp.
+- **Audit Log** — successful email/password sign-ins, clock changes, manual
+  punches, note/completed-task edits, deletions, and administrator access changes are recorded with actor,
+  employee, date, details, and timestamp. The private admin view files these
+  records as Year → Month → Day and can download a complete month or year as CSV.
 - **Central Time everywhere** — the live clock, punch editors, history,
   exports, and Audit Log all use `America/Chicago`, including automatic
   daylight-saving changes.
