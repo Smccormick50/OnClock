@@ -74,6 +74,8 @@
     <button class="tab-btn active" id="tabLogBtn">Log</button>
     <button class="tab-btn" id="tabMileageBtn">Mileage</button>
     <button class="tab-btn" id="tabPastDaysBtn">Past Days</button>
+    <button class="tab-btn" id="tabWeeklyBtn">Work Week Approval</button>
+    <button class="tab-btn" id="tabApprovalsBtn" style="display:none;">Approvals <span class="tab-count" id="approvalCount">0</span></button>
   </div>
 
   <div id="logTab">
@@ -193,6 +195,46 @@
       <div id="historyList"><div class="log-empty">Loading…</div></div>
     </div>
   </div>
+
+  <div id="weeklyApprovalTab" style="display:none;">
+    <div class="panel">
+      <div class="archive-heading-row">
+        <h2>Work Week Approval</h2>
+        <span class="archive-live-badge">Monday–Sunday</span>
+      </div>
+      <p class="archive-intro">Choose a work week, review the saved logs, then send the complete week to the person who should approve it.</p>
+      <div class="week-picker-row">
+        <button class="btn secondary" id="previousWeekBtn">Previous week</button>
+        <label for="approvalWeekPicker">Choose a week</label>
+        <input type="date" id="approvalWeekPicker">
+        <button class="btn secondary" id="thisWeekBtn">This week</button>
+      </div>
+      <div class="week-approval-heading">
+        <div>
+          <div class="week-label" id="employeeWeekLabel">—</div>
+          <div class="approval-status" id="employeeApprovalStatus">Loading…</div>
+        </div>
+        <div class="week-total" id="employeeWeekTotal">0h 00m</div>
+      </div>
+      <div id="employeeWeekLogs"><div class="log-empty">Loading work week…</div></div>
+      <div class="approval-submit-box">
+        <label for="weekApproverSelect">Send this week to</label>
+        <select id="weekApproverSelect"><option value="">Select an approver</option></select>
+        <button class="btn" id="submitWeekBtn">Submit Work Week</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="approvalsTab" style="display:none;">
+    <div class="panel">
+      <div class="archive-heading-row">
+        <h2>Approvals</h2>
+        <span class="archive-live-badge">Read-only logs</span>
+      </div>
+      <p class="archive-intro">Review each employee’s complete Monday–Sunday work logs before approving or returning the week for correction.</p>
+      <div id="assignedApprovalsList"><div class="log-empty">Loading approvals…</div></div>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.14.1/firebase-app-compat.min.js"></script>
@@ -203,6 +245,7 @@
 <script src="js/firebase-config.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/timeutils.js"></script>
+<script src="js/weeklyapprovals.js"></script>
 <script src="js/pdfexport.js"></script>
 <script src="js/csvexport.js"></script>
 <script src="js/mileageexport.js"></script>

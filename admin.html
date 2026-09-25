@@ -50,6 +50,7 @@
     <button class="tab-btn active" id="tabTodayBtn">Today</button>
     <button class="tab-btn" id="tabHistoryBtn">History</button>
     <button class="tab-btn" id="tabPayPeriodBtn">Pay Period</button>
+    <button class="tab-btn" id="tabCompletedApprovalsBtn">Completed Approvals</button>
     <button class="tab-btn" id="tabEmployeesBtn">Employees</button>
     <button class="tab-btn" id="tabAuditBtn">Audit Log</button>
   </div>
@@ -98,9 +99,23 @@
     </div>
   </div>
 
+  <div class="panel" id="completedApprovalsTab" style="display:none;">
+    <div class="archive-heading-row">
+      <h2>Completed Work Approvals</h2>
+      <span class="archive-live-badge">Monday–Sunday</span>
+    </div>
+    <p class="archive-intro">Approved work weeks are read-only. Open a week to review its submitted logs or download a PDF or CSV copy.</p>
+    <div class="archive-filter-row">
+      <label for="completedApprovalEmployee">Employee</label>
+      <select id="completedApprovalEmployee"><option value="">All employees</option></select>
+      <span id="completedApprovalSummary" class="archive-filter-summary">Open this tab to load approvals.</span>
+    </div>
+    <div id="completedApprovalsList"><div class="log-empty">Open this tab to load approvals.</div></div>
+  </div>
+
   <div class="panel" id="employeesTab" style="display:none;">
     <h2>Employees &amp; access</h2>
-    <p class="archive-intro">Manage who has administrator access here. Time entries stay on the Today and History tabs.</p>
+    <p class="archive-intro">Manage who has administrator access here. Any registered employee can be selected to approve a work week without receiving administrator access.</p>
     <div id="employeesList"><div class="log-empty">Loading…</div></div>
   </div>
 
@@ -123,6 +138,7 @@
 <script src="js/firebase-config.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/timeutils.js"></script>
+<script src="js/weeklyapprovals.js"></script>
 <script src="js/pdfexport.js"></script>
 <script src="js/csvexport.js"></script>
 <script src="js/archives.js"></script>

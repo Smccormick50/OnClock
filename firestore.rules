@@ -14,8 +14,10 @@ service cloud.firestore {
     }
 
     // One profile doc per user: name, email, role ("employee" or "admin").
+    // Signed-in coworkers may read the directory so an employee can select
+    // the person who should approve a submitted work week.
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow read: if isSignedIn();
 
       // A user can create their own profile (always as "employee" —
       // the client always sends role: "employee" on signup).
@@ -69,10 +71,64 @@ service cloud.firestore {
                     && request.resource.data.actorUid == request.auth.uid
                     && request.resource.data.targetUid is string
                     && request.resource.data.action is string
-                    && (isAdmin() || request.resource.data.targetUid == request.auth.uid);
+                    && (
+                      isAdmin()
+                      || request.resource.data.targetUid == request.auth.uid
+                      || (
+                        request.resource.data.approvalId is string
+                        && exists(/databases/$(database)/documents/weeklyApprovals/$(request.resource.data.approvalId))
+                        && get(/databases/$(database)/documents/weeklyApprovals/$(request.resource.data.approvalId)).data.approverUid == request.auth.uid
+                        && get(/databases/$(database)/documents/weeklyApprovals/$(request.resource.data.approvalId)).data.employeeUid == request.resource.data.targetUid
+                      )
+                    );
       allow read: if isAdmin()
                   || (isSignedIn() && resource.data.actorUid == request.auth.uid);
       allow update, delete: if false;
+    }
+
+    // A frozen Monday-Sunday snapshot submitted by an employee to one
+    // selected approver. The employee can submit/resubmit their own week;
+    // the assigned approver can only change its decision fields; admins can
+    // review every approved week on the Completed Approvals tab.
+    match /weeklyApprovals/{approvalId} {
+      allow read: if isSignedIn() && (
+                    isAdmin()
+                    || resource.data.employeeUid == request.auth.uid
+                    || resource.data.approverUid == request.auth.uid
+                  );
+
+      allow create: if isSignedIn()
+                    && request.resource.data.employeeUid == request.auth.uid
+                    && request.resource.data.approverUid is string
+                    && request.resource.data.approverUid != request.auth.uid
+                    && request.resource.data.status == 'pending';
+
+      allow update: if isAdmin()
+                    || (
+                      isSignedIn()
+                      && resource.data.employeeUid == request.auth.uid
+                      && resource.data.status == 'returned'
+                      && request.resource.data.employeeUid == request.auth.uid
+                      && request.resource.data.status == 'pending'
+                      && request.resource.data.approverUid != request.auth.uid
+                    )
+                    || (
+                      isSignedIn()
+                      && resource.data.approverUid == request.auth.uid
+                      && resource.data.status == 'pending'
+                      && request.resource.data.status in ['approved', 'returned']
+                      && request.resource.data.employeeUid == resource.data.employeeUid
+                      && request.resource.data.approverUid == resource.data.approverUid
+                      && request.resource.data.snapshot == resource.data.snapshot
+                      && request.resource.data.totalMinutes == resource.data.totalMinutes
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'status', 'approvedAt', 'approvedAtIso', 'approvedByUid', 'approvedByName',
+                        'returnedAt', 'returnedAtIso', 'returnedByUid', 'returnedByName',
+                        'returnComment', 'lastUpdatedAt'
+                      ])
+                    );
+
+      allow delete: if isAdmin();
     }
 
     // Each employee's running to-do list — one doc per user, not tied

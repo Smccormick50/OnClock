@@ -28,10 +28,11 @@ scheduled workflow instead of a paid Firebase Cloud Function.
 
 ## 2. Deploy the security rules
 
-The rules in `firestore.rules` keep each employee's data private to
-them, while letting anyone whose `users/{uid}` doc has `role: "admin"`
-read and edit everyone's data. Audit records are append-only and only
-admins can review everyone's changes. The `archives` collection is
+The rules in `firestore.rules` keep each employee's time data private to
+them and their selected weekly approver, while letting anyone whose
+`users/{uid}` doc has `role: "admin"` read and edit everyone's data.
+Signed-in employees can see coworkers' names in the approver dropdown.
+Audit records are append-only and only admins can review everyone's changes. The `archives` collection is
 read-only from the browser — it's only ever written by the GitHub
 Actions script below, using an admin service account that bypasses
 these rules entirely.
@@ -126,6 +127,7 @@ shortly after midnight, whether or not anyone has the app open.
 - `js/firebase-config.js` — your project keys (edit this)
 - `js/auth.js` — sign up / sign in / sign out / profile lookup
 - `js/timeutils.js` — Central Time conversion plus date, time, and duration formatting shared by both pages
+- `js/weeklyapprovals.js` — Monday-Sunday week calculations, read-only weekly log display, and weekly PDF/CSV exports
 - `js/pdfexport.js` — builds a PDF in the browser and downloads it
 - `js/csvexport.js` — same idea, as a CSV: a single day, or a whole pay-period range with per-employee totals
 - `js/archives.js` — renders combined completed/archived history, grouped by month, with PDF and CSV download on each
@@ -155,6 +157,18 @@ shortly after midnight, whether or not anyone has the app open.
   punches, note/completed-task edits, deletions, and administrator access changes are recorded with actor,
   employee, date, details, and timestamp. The private admin view files these
   records as Year → Month → Day and can download a complete month or year as CSV.
+- **Historical Audit Backfill** — the manual `Backfill audit history` GitHub
+  Action rebuilds clock-ins, clock-outs, notes, and completed tasks from saved
+  logs. The included defaults cover September 16–23, 2026. Imported rows are
+  clearly labeled `Historical import`; the workflow does not invent old login
+  times, edits, deletions, or actors that were never stored.
+- **Monday–Sunday Work Week Approval** — employees review a complete week,
+  select a coworker, and submit a frozen copy of the logs. The selected person
+  automatically receives an Approvals tab where they can inspect every day's
+  punches, notes, and completed tasks, then approve or return the week with a
+  correction comment. Approved weeks move to the administrator's Completed
+  Approvals tab with PDF and CSV downloads. Submission and decisions are also
+  recorded in the Audit Log.
 - **Central Time everywhere** — the live clock, punch editors, history,
   exports, and Audit Log all use `America/Chicago`, including automatic
   daylight-saving changes.
@@ -209,6 +223,7 @@ shortly after midnight, whether or not anyone has the app open.
 - `entries/{uid}_{YYYY-MM-DD}` — `{ uid, name, date, sessions: [{clockIn, clockOut}], notes: [{time, text}] }` — today's live, editable log
 - `archives/{uid}_{YYYY-MM-DD}` — `{ uid, name, date, month, sessions, notes, totalMinutes, archivedAt }` — a frozen copy of a completed day, normally written shortly after midnight
 - `auditLogs/{autoId}` — append-only `{ actorUid, actorName, targetUid, targetName, date, action, detail, createdAt }` change history
+- `weeklyApprovals/{uid}_{YYYY-MM-DD}` — a frozen Monday-Sunday work-week snapshot with employee, selected approver, total hours, status, submission/approval timestamps, and all seven daily logs
 
 ## How the two kinds of PDF differ
 

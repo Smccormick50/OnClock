@@ -4,7 +4,7 @@
 // other cross-origin request — those are left completely alone and
 // always go straight to the network.
 
-const CACHE_NAME = "onclock-shell-v10";
+const CACHE_NAME = "onclock-shell-v11";
 const CORE_ASSETS = [
   "index.html",
   "admin.html",
@@ -13,6 +13,7 @@ const CORE_ASSETS = [
   "js/firebase-config.js",
   "js/auth.js",
   "js/timeutils.js",
+  "js/weeklyapprovals.js",
   "js/pdfexport.js",
   "js/csvexport.js",
   "js/mileageexport.js",
