@@ -12,9 +12,11 @@
   var unsubArchives = null;
   var unsubHistoryEntries = null;
   var unsubAudit = null;
+  var unsubCompletedApprovals = null;
   var historyEntryDocs = [];
   var archiveDocs = [];
   var auditDocs = [];
+  var completedApprovalDocs = [];
 
   function usersCol() { return db.collection("users"); }
   function entryRefFor(uid, dateStr) { return db.collection("entries").doc(entryId(uid, dateStr)); }
@@ -27,6 +29,7 @@
       renderEmployees();
       populatePeriodEmployeeDropdown();
       populateAuditEmployeeDropdown();
+      populateCompletedApprovalEmployeeDropdown();
     }, function (err) { console.error("users snapshot error", err); });
   }
 
@@ -59,6 +62,20 @@
       select.appendChild(option);
     });
     if (previousValue && users.some(function (user) { return user.id === previousValue; })) select.value = previousValue;
+  }
+
+  function populateCompletedApprovalEmployeeDropdown() {
+    var select = document.getElementById("completedApprovalEmployee");
+    if (!select) return;
+    var previous = select.value;
+    select.innerHTML = '<option value="">All employees</option>';
+    users.forEach(function (user) {
+      var option = document.createElement("option");
+      option.value = user.id;
+      option.textContent = user.name || user.email || "Employee";
+      select.appendChild(option);
+    });
+    if (previous && users.some(function (user) { return user.id === previous; })) select.value = previous;
   }
 
   function subscribeEntriesForDate(dateStr) {
@@ -150,11 +167,88 @@
     });
   }
 
+  // ---------- completed Monday-Sunday work approvals ----------
+  function subscribeCompletedApprovals() {
+    unsubCompletedApprovals = db.collection("weeklyApprovals").where("status", "==", "approved").onSnapshot(function (snap) {
+      completedApprovalDocs = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      renderCompletedApprovals();
+    }, function (err) {
+      console.error("completed approvals error", err);
+      document.getElementById("completedApprovalsList").innerHTML = '<div class="log-empty">Completed approvals could not load. Publish the updated Firestore rules, then try again.</div>';
+    });
+  }
+
+  function approvalTimeValue(approval) {
+    var value = approval.approvedAt || approval.approvedAtIso;
+    var date = value && typeof value.toDate === "function" ? value.toDate() : new Date(value || 0);
+    return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+  }
+
+  function renderCompletedApprovals() {
+    var list = document.getElementById("completedApprovalsList");
+    var selectedUid = document.getElementById("completedApprovalEmployee").value;
+    var visible = completedApprovalDocs.filter(function (approval) {
+      return !selectedUid || approval.employeeUid === selectedUid;
+    }).sort(function (a, b) { return approvalTimeValue(b) - approvalTimeValue(a); });
+    document.getElementById("completedApprovalSummary").textContent = visible.length + (visible.length === 1 ? " approved week" : " approved weeks");
+    list.innerHTML = "";
+    if (!visible.length) {
+      list.innerHTML = '<div class="log-empty">No completed work approvals match this selection.</div>';
+      return;
+    }
+    visible.forEach(function (approval) {
+      var card = document.createElement("div");
+      card.className = "approval-card completed";
+      var top = document.createElement("div");
+      top.className = "approval-card-top";
+      var identity = document.createElement("div");
+      var title = document.createElement("div");
+      title.className = "approval-card-title";
+      title.textContent = approval.employeeName || "Employee";
+      var meta = document.createElement("div");
+      meta.className = "approval-card-meta";
+      meta.textContent = workWeekLabel(approval.weekStart) + " · Approved by " +
+        (approval.approvedByName || approval.approverName || "Approver") +
+        (approval.approvedAt || approval.approvedAtIso ? " · " + fmtDateTimeCentral(approval.approvedAt || approval.approvedAtIso) : "");
+      identity.appendChild(title);
+      identity.appendChild(meta);
+      var total = document.createElement("div");
+      total.className = "approval-card-total";
+      total.textContent = fmtDuration(approval.totalMinutes || weeklySnapshotTotal(approval.snapshot));
+      top.appendChild(identity);
+      top.appendChild(total);
+      card.appendChild(top);
+
+      var details = document.createElement("details");
+      var summary = document.createElement("summary");
+      summary.textContent = "View Submitted Work Logs";
+      details.appendChild(summary);
+      details.appendChild(buildWeeklyApprovalLog(approval.snapshot || []));
+      card.appendChild(details);
+
+      var actions = document.createElement("div");
+      actions.className = "approval-actions";
+      var pdf = document.createElement("button");
+      pdf.className = "btn secondary";
+      pdf.textContent = "Download PDF";
+      pdf.onclick = function () { exportWeeklyApprovalPdf(approval); };
+      var csv = document.createElement("button");
+      csv.className = "btn secondary";
+      csv.textContent = "Download CSV";
+      csv.onclick = function () { exportWeeklyApprovalCsv(approval); };
+      actions.appendChild(pdf);
+      actions.appendChild(csv);
+      card.appendChild(actions);
+      list.appendChild(card);
+    });
+  }
+
   function switchTab(tab) {
     var panels = {
       today: document.getElementById("todayTab"),
       history: document.getElementById("historyTab"),
       payperiod: document.getElementById("payPeriodTab"),
+      completed: document.getElementById("completedApprovalsTab"),
       employees: document.getElementById("employeesTab"),
       audit: document.getElementById("auditTab")
     };
@@ -162,6 +256,7 @@
       today: document.getElementById("tabTodayBtn"),
       history: document.getElementById("tabHistoryBtn"),
       payperiod: document.getElementById("tabPayPeriodBtn"),
+      completed: document.getElementById("tabCompletedApprovalsBtn"),
       employees: document.getElementById("tabEmployeesBtn"),
       audit: document.getElementById("tabAuditBtn")
     };
@@ -170,6 +265,7 @@
       buttons[key].classList.toggle("active", key === tab);
     });
     if (tab === "history" && !unsubArchives) subscribeHistory();
+    if (tab === "completed" && !unsubCompletedApprovals) subscribeCompletedApprovals();
     if (tab === "audit" && !unsubAudit) subscribeAudit();
   }
 
@@ -456,7 +552,10 @@
       completed_task_added: "Task completed",
       completed_task_edited: "Completed task edited",
       completed_task_deleted: "Completed task deleted",
-      role_changed: "Access changed"
+      role_changed: "Access changed",
+      week_submitted: "Work week submitted",
+      week_approved: "Work week approved",
+      week_returned: "Work week returned"
     };
     return labels[action] || String(action || "Change").replace(/_/g, " ");
   }
@@ -885,11 +984,13 @@
     document.getElementById("tabTodayBtn").onclick = function () { switchTab("today"); };
     document.getElementById("tabHistoryBtn").onclick = function () { switchTab("history"); };
     document.getElementById("tabPayPeriodBtn").onclick = function () { switchTab("payperiod"); };
+    document.getElementById("tabCompletedApprovalsBtn").onclick = function () { switchTab("completed"); };
     document.getElementById("tabEmployeesBtn").onclick = function () { switchTab("employees"); };
     document.getElementById("tabAuditBtn").onclick = function () { switchTab("audit"); };
     document.getElementById("historyEmployee").onchange = renderCombinedHistory;
     document.getElementById("historyMonth").onchange = renderCombinedHistory;
     document.getElementById("auditEmployee").onchange = renderAudit;
+    document.getElementById("completedApprovalEmployee").onchange = renderCompletedApprovals;
 
     var defaults = defaultPeriodRange();
     document.getElementById("periodStart").value = defaults.start;

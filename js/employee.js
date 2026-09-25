@@ -14,6 +14,15 @@
   var unsubMileage = null;
   var mileageTrips = []; // pending, not-yet-exported mileage trips
   var editingTripIndex = null;
+  var approverUsers = [];
+  var myWeeklyApprovals = {};
+  var assignedWeeklyApprovals = [];
+  var selectedApprovalWeekStart = mondayForWorkDate(todayStr);
+  var selectedWeekSnapshot = [];
+  var unsubApproverUsers = null;
+  var unsubMyApprovals = null;
+  var unsubAssignedApprovals = null;
+  var weekLoadToken = 0;
 
   function entryRef(dateStr) {
     return db.collection("entries").doc(entryId(currentUser.uid, dateStr));
@@ -24,8 +33,8 @@
   }
 
   function auditCol() { return db.collection("auditLogs"); }
-  function writeAudit(action, dateStr, detail) {
-    return auditCol().add({
+  function writeAudit(action, dateStr, detail, extra) {
+    var record = {
       actorUid: currentUser.uid,
       actorName: currentProfile.name || currentProfile.email || "Employee",
       targetUid: currentUser.uid,
@@ -35,7 +44,9 @@
       detail: detail || "",
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdAtIso: new Date().toISOString()
-    }).catch(function (err) { console.error("audit write error", err); });
+    };
+    Object.keys(extra || {}).forEach(function (key) { record[key] = extra[key]; });
+    return auditCol().add(record).catch(function (err) { console.error("audit write error", err); });
   }
 
   function saveDay(dateStr, data, auditAction, auditDetail) {
@@ -48,6 +59,292 @@
       completedTodos: data.completedTodos || []
     }).then(function () {
       if (auditAction) return writeAudit(auditAction, dateStr, auditDetail);
+    });
+  }
+
+  // ---------- Monday-Sunday work-week approvals ----------
+  function weeklyApprovalId(uid, weekStart) { return uid + "_" + weekStart; }
+  function weeklyApprovalRef(weekStart) {
+    return db.collection("weeklyApprovals").doc(weeklyApprovalId(currentUser.uid, weekStart));
+  }
+
+  function loadWeekSnapshot(weekStart) {
+    return Promise.all(datesForWorkWeek(weekStart).map(function (dateStr) {
+      return entryRef(dateStr).get().then(function (snap) {
+        if (snap.exists) return snap.data();
+        return db.collection("archives").doc(entryId(currentUser.uid, dateStr)).get().then(function (archiveSnap) {
+          return archiveSnap.exists ? archiveSnap.data() : emptyDay();
+        });
+      }).then(function (data) {
+        var day = {
+          date: dateStr,
+          sessions: clone(data.sessions || []),
+          notes: clone(data.notes || []),
+          completedTodos: clone(data.completedTodos || [])
+        };
+        day.totalMinutes = totalMinutesFor(day);
+        return day;
+      });
+    }));
+  }
+
+  function populateApproverSelect() {
+    var select = document.getElementById("weekApproverSelect");
+    if (!select || !currentUser) return;
+    var previous = select.value;
+    select.innerHTML = '<option value="">Select an approver</option>';
+    approverUsers.filter(function (user) { return user.id !== currentUser.uid; }).forEach(function (user) {
+      var option = document.createElement("option");
+      option.value = user.id;
+      option.textContent = user.name || user.email || "Employee";
+      select.appendChild(option);
+    });
+    var preferred = previous || currentProfile.lastApproverUid || "";
+    if (preferred && approverUsers.some(function (user) { return user.id === preferred && user.id !== currentUser.uid; })) {
+      select.value = preferred;
+    }
+  }
+
+  function subscribeApproverDirectory() {
+    unsubApproverUsers = db.collection("users").onSnapshot(function (snap) {
+      approverUsers = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      approverUsers.sort(function (a, b) { return String(a.name || a.email || "").localeCompare(String(b.name || b.email || "")); });
+      populateApproverSelect();
+    }, function (err) {
+      console.error("approver directory error", err);
+      document.getElementById("weekApproverSelect").innerHTML = '<option value="">Approver list could not load</option>';
+    });
+  }
+
+  function subscribeMyWeeklyApprovals() {
+    unsubMyApprovals = db.collection("weeklyApprovals").where("employeeUid", "==", currentUser.uid).onSnapshot(function (snap) {
+      myWeeklyApprovals = {};
+      snap.docs.forEach(function (doc) {
+        var approval = Object.assign({ id: doc.id }, doc.data());
+        myWeeklyApprovals[approval.weekStart] = approval;
+      });
+      renderSelectedWorkWeek();
+    }, function (err) { console.error("my approvals error", err); });
+  }
+
+  function subscribeAssignedWeeklyApprovals() {
+    unsubAssignedApprovals = db.collection("weeklyApprovals").where("approverUid", "==", currentUser.uid).onSnapshot(function (snap) {
+      assignedWeeklyApprovals = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      renderAssignedApprovals();
+    }, function (err) {
+      console.error("assigned approvals error", err);
+      document.getElementById("assignedApprovalsList").innerHTML = '<div class="log-empty">Approvals could not load.</div>';
+    });
+  }
+
+  function approvalStatusText(approval) {
+    if (!approval) return "Not submitted";
+    if (approval.status === "pending") return "Waiting for " + (approval.approverName || "approver");
+    if (approval.status === "approved") {
+      return "Approved by " + (approval.approvedByName || approval.approverName || "approver") +
+        (approval.approvedAt || approval.approvedAtIso ? " · " + fmtDateTimeCentral(approval.approvedAt || approval.approvedAtIso) : "");
+    }
+    if (approval.status === "returned") return "Returned for correction: " + (approval.returnComment || "Please review this week.");
+    return approval.status || "Not submitted";
+  }
+
+  function renderSelectedWorkWeek() {
+    if (!currentUser) return;
+    var token = ++weekLoadToken;
+    var approval = myWeeklyApprovals[selectedApprovalWeekStart];
+    var status = document.getElementById("employeeApprovalStatus");
+    var submitBtn = document.getElementById("submitWeekBtn");
+    document.getElementById("approvalWeekPicker").value = selectedApprovalWeekStart;
+    document.getElementById("employeeWeekLabel").textContent = workWeekLabel(selectedApprovalWeekStart);
+    status.className = "approval-status" + (approval ? " " + approval.status : "");
+    status.textContent = approvalStatusText(approval);
+    submitBtn.disabled = !!approval && (approval.status === "pending" || approval.status === "approved");
+    submitBtn.textContent = approval && approval.status === "returned" ? "Resubmit Work Week" : "Submit Work Week";
+    document.getElementById("employeeWeekLogs").innerHTML = '<div class="log-empty">Loading work week…</div>';
+
+    loadWeekSnapshot(selectedApprovalWeekStart).then(function (snapshot) {
+      if (token !== weekLoadToken) return;
+      selectedWeekSnapshot = snapshot;
+      document.getElementById("employeeWeekTotal").textContent = fmtDuration(weeklySnapshotTotal(snapshot));
+      var list = document.getElementById("employeeWeekLogs");
+      list.innerHTML = "";
+      list.appendChild(buildWeeklyApprovalLog(snapshot));
+    }).catch(function (err) {
+      console.error("work week load error", err);
+      document.getElementById("employeeWeekLogs").innerHTML = '<div class="log-empty">This work week could not load.</div>';
+    });
+  }
+
+  function submitSelectedWorkWeek() {
+    var existing = myWeeklyApprovals[selectedApprovalWeekStart];
+    if (existing && (existing.status === "pending" || existing.status === "approved")) return;
+    var approverUid = document.getElementById("weekApproverSelect").value;
+    var approver = approverUsers.find(function (user) { return user.id === approverUid; });
+    if (!approver) { alert("Select the person who should approve this work week."); return; }
+    if (approverUid === currentUser.uid) { alert("Choose someone other than yourself to approve the week."); return; }
+    var button = document.getElementById("submitWeekBtn");
+    button.disabled = true;
+    button.textContent = "Submitting…";
+
+    loadWeekSnapshot(selectedApprovalWeekStart).then(function (snapshot) {
+      if (!weeklySnapshotHasWork(snapshot)) throw new Error("EMPTY_WEEK");
+      if (weeklySnapshotHasOpenPunch(snapshot)) throw new Error("OPEN_PUNCH");
+      var id = weeklyApprovalId(currentUser.uid, selectedApprovalWeekStart);
+      var nowIso = new Date().toISOString();
+      var record = {
+        employeeUid: currentUser.uid,
+        employeeName: currentProfile.name || currentProfile.email || "Employee",
+        approverUid: approver.id,
+        approverName: approver.name || approver.email || "Approver",
+        weekStart: selectedApprovalWeekStart,
+        weekEnd: sundayForWorkWeek(selectedApprovalWeekStart),
+        status: "pending",
+        snapshot: snapshot,
+        totalMinutes: weeklySnapshotTotal(snapshot),
+        submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        submittedAtIso: nowIso,
+        approvedAt: null,
+        approvedAtIso: "",
+        approvedByUid: "",
+        approvedByName: "",
+        returnedAt: null,
+        returnedAtIso: "",
+        returnedByUid: "",
+        returnedByName: "",
+        returnComment: "",
+        lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      };
+      return weeklyApprovalRef(selectedApprovalWeekStart).set(record).then(function () {
+        currentProfile.lastApproverUid = approver.id;
+        return userDocRef(currentUser.uid).update({ lastApproverUid: approver.id });
+      }).then(function () {
+        return writeAudit(
+          "week_submitted",
+          selectedApprovalWeekStart,
+          "Submitted " + workWeekLabel(selectedApprovalWeekStart) + " to " + record.approverName + " for approval.",
+          { approvalId: id }
+        );
+      });
+    }).catch(function (err) {
+      if (err && err.message === "EMPTY_WEEK") alert("There is no logged work in this week to submit.");
+      else if (err && err.message === "OPEN_PUNCH") alert("Clock out of every open shift before submitting this week.");
+      else { console.error("submit work week error", err); alert("The work week could not be submitted. Please try again."); }
+      button.disabled = false;
+      button.textContent = existing && existing.status === "returned" ? "Resubmit Work Week" : "Submit Work Week";
+    });
+  }
+
+  function writeApprovalDecisionAudit(action, approval, detail) {
+    return auditCol().add({
+      actorUid: currentUser.uid,
+      actorName: currentProfile.name || currentProfile.email || "Approver",
+      targetUid: approval.employeeUid,
+      targetName: approval.employeeName || "Employee",
+      date: approval.weekStart,
+      action: action,
+      detail: detail,
+      approvalId: approval.id,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdAtIso: new Date().toISOString()
+    }).catch(function (err) { console.error("approval audit error", err); });
+  }
+
+  function decideApproval(approval, approve) {
+    if (!approval || approval.status !== "pending") return;
+    var comment = "";
+    if (!approve) {
+      comment = window.prompt("What does " + approval.employeeName + " need to correct?");
+      if (comment === null) return;
+      comment = comment.trim();
+      if (!comment) { alert("Enter a correction note before returning the week."); return; }
+    } else if (!window.confirm("Approve " + approval.employeeName + "'s work week for " + workWeekLabel(approval.weekStart) + "?")) {
+      return;
+    }
+    var nowIso = new Date().toISOString();
+    var update = approve ? {
+      status: "approved",
+      approvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      approvedAtIso: nowIso,
+      approvedByUid: currentUser.uid,
+      approvedByName: currentProfile.name || currentProfile.email || "Approver",
+      lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    } : {
+      status: "returned",
+      returnedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      returnedAtIso: nowIso,
+      returnedByUid: currentUser.uid,
+      returnedByName: currentProfile.name || currentProfile.email || "Approver",
+      returnComment: comment,
+      lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    db.collection("weeklyApprovals").doc(approval.id).update(update).then(function () {
+      var action = approve ? "week_approved" : "week_returned";
+      var detail = approve
+        ? "Approved " + workWeekLabel(approval.weekStart) + "."
+        : "Returned " + workWeekLabel(approval.weekStart) + " for correction: " + comment;
+      return writeApprovalDecisionAudit(action, approval, detail);
+    }).catch(function (err) {
+      console.error("approval decision error", err);
+      alert("The approval decision could not be saved. Please try again.");
+    });
+  }
+
+  function renderAssignedApprovals() {
+    var pending = assignedWeeklyApprovals.filter(function (approval) { return approval.status === "pending"; });
+    pending.sort(function (a, b) { return String(b.weekStart).localeCompare(String(a.weekStart)); });
+    var tabButton = document.getElementById("tabApprovalsBtn");
+    var count = document.getElementById("approvalCount");
+    count.textContent = pending.length;
+    tabButton.style.display = pending.length ? "inline-block" : "none";
+    var list = document.getElementById("assignedApprovalsList");
+    list.innerHTML = "";
+    if (!pending.length) {
+      list.innerHTML = '<div class="log-empty">No work weeks are waiting for your approval.</div>';
+      if (document.getElementById("approvalsTab").style.display !== "none") switchAppTab("weekly");
+      return;
+    }
+    pending.forEach(function (approval) {
+      var card = document.createElement("div");
+      card.className = "approval-card";
+      var top = document.createElement("div");
+      top.className = "approval-card-top";
+      var identity = document.createElement("div");
+      var title = document.createElement("div");
+      title.className = "approval-card-title";
+      title.textContent = approval.employeeName || "Employee";
+      var meta = document.createElement("div");
+      meta.className = "approval-card-meta";
+      meta.textContent = workWeekLabel(approval.weekStart) + (approval.submittedAt || approval.submittedAtIso ? " · Submitted " + fmtDateTimeCentral(approval.submittedAt || approval.submittedAtIso) : "");
+      identity.appendChild(title);
+      identity.appendChild(meta);
+      var total = document.createElement("div");
+      total.className = "approval-card-total";
+      total.textContent = fmtDuration(approval.totalMinutes || weeklySnapshotTotal(approval.snapshot));
+      top.appendChild(identity);
+      top.appendChild(total);
+      card.appendChild(top);
+
+      var details = document.createElement("details");
+      var summary = document.createElement("summary");
+      summary.textContent = "View Work Logs";
+      details.appendChild(summary);
+      details.appendChild(buildWeeklyApprovalLog(approval.snapshot || []));
+      card.appendChild(details);
+
+      var actions = document.createElement("div");
+      actions.className = "approval-actions";
+      var approveBtn = document.createElement("button");
+      approveBtn.className = "btn";
+      approveBtn.textContent = "Approve Work Week";
+      approveBtn.onclick = function () { decideApproval(approval, true); };
+      var returnBtn = document.createElement("button");
+      returnBtn.className = "btn secondary";
+      returnBtn.textContent = "Return for Correction";
+      returnBtn.onclick = function () { decideApproval(approval, false); };
+      actions.appendChild(approveBtn);
+      actions.appendChild(returnBtn);
+      card.appendChild(actions);
+      list.appendChild(card);
     });
   }
 
@@ -898,23 +1195,44 @@
     var panels = {
       log: document.getElementById("logTab"),
       mileage: document.getElementById("mileageTab"),
-      pastdays: document.getElementById("pastDaysTab")
+      pastdays: document.getElementById("pastDaysTab"),
+      weekly: document.getElementById("weeklyApprovalTab"),
+      approvals: document.getElementById("approvalsTab")
     };
     var buttons = {
       log: document.getElementById("tabLogBtn"),
       mileage: document.getElementById("tabMileageBtn"),
-      pastdays: document.getElementById("tabPastDaysBtn")
+      pastdays: document.getElementById("tabPastDaysBtn"),
+      weekly: document.getElementById("tabWeeklyBtn"),
+      approvals: document.getElementById("tabApprovalsBtn")
     };
     Object.keys(panels).forEach(function (key) {
       panels[key].style.display = key === tab ? "block" : "none";
       buttons[key].classList.toggle("active", key === tab);
     });
+    if (tab === "weekly") renderSelectedWorkWeek();
   }
 
   function wireHandlers() {
     document.getElementById("tabLogBtn").onclick = function () { switchAppTab("log"); };
     document.getElementById("tabMileageBtn").onclick = function () { switchAppTab("mileage"); };
     document.getElementById("tabPastDaysBtn").onclick = function () { switchAppTab("pastdays"); };
+    document.getElementById("tabWeeklyBtn").onclick = function () { switchAppTab("weekly"); };
+    document.getElementById("tabApprovalsBtn").onclick = function () { switchAppTab("approvals"); };
+    document.getElementById("previousWeekBtn").onclick = function () {
+      selectedApprovalWeekStart = shiftWorkDate(selectedApprovalWeekStart, -7);
+      renderSelectedWorkWeek();
+    };
+    document.getElementById("thisWeekBtn").onclick = function () {
+      selectedApprovalWeekStart = mondayForWorkDate(todayStr);
+      renderSelectedWorkWeek();
+    };
+    document.getElementById("approvalWeekPicker").onchange = function (event) {
+      if (!event.target.value) return;
+      selectedApprovalWeekStart = mondayForWorkDate(event.target.value);
+      renderSelectedWorkWeek();
+    };
+    document.getElementById("submitWeekBtn").onclick = submitSelectedWorkWeek;
     document.getElementById("punchBtn").onclick = function () {
       currentOpenSession(getDayData(todayStr)) ? doClockOut() : doClockIn();
     };
@@ -990,6 +1308,10 @@
     subscribeArchives();
     subscribeTodos();
     subscribeMileage();
+    subscribeApproverDirectory();
+    subscribeMyWeeklyApprovals();
+    subscribeAssignedWeeklyApprovals();
+    document.getElementById("approvalWeekPicker").max = todayStr;
   }
 
   function showAuth() {
@@ -1000,9 +1322,15 @@
     if (unsubArchives) { unsubArchives(); unsubArchives = null; }
     if (unsubTodos) { unsubTodos(); unsubTodos = null; }
     if (unsubMileage) { unsubMileage(); unsubMileage = null; }
+    if (unsubApproverUsers) { unsubApproverUsers(); unsubApproverUsers = null; }
+    if (unsubMyApprovals) { unsubMyApprovals(); unsubMyApprovals = null; }
+    if (unsubAssignedApprovals) { unsubAssignedApprovals(); unsubAssignedApprovals = null; }
     docCache = {};
     todoItems = [];
     mileageTrips = [];
+    approverUsers = [];
+    myWeeklyApprovals = {};
+    assignedWeeklyApprovals = [];
     document.getElementById("authScreen").style.display = "block";
     document.getElementById("appScreen").style.display = "none";
   }
