@@ -705,3 +705,110 @@ header.top .links a, header.top .links button {
 .mileage-trip-main .trip-meta { color: var(--ink-soft); font-family: 'Space Mono', monospace; font-size: 12.5px; }
 .mileage-trip-amount { font-family: 'Space Mono', monospace; font-size: 14px; color: var(--pine); font-weight: 600; white-space: nowrap; padding-top: 2px; }
 .mileage-trip-amount.is-pending { color: #8a6800; }
+
+/* Monday-Sunday work-week approvals */
+.tab-count {
+  align-items: center;
+  background: var(--pine);
+  border-radius: 999px;
+  color: var(--paper-raised);
+  display: inline-flex;
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  justify-content: center;
+  margin-left: 4px;
+  min-height: 18px;
+  min-width: 18px;
+  padding: 1px 5px;
+}
+.tab-btn.active .tab-count { background: var(--brass-light); color: var(--pine-dark); }
+.week-picker-row, .approval-submit-box {
+  align-items: center;
+  background: var(--pine-tint);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0;
+  padding: 12px;
+}
+.week-picker-row label, .approval-submit-box label {
+  color: var(--pine);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+}
+.week-picker-row input, .approval-submit-box select, .approval-return-comment {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 16px;
+  padding: 9px 10px;
+}
+.approval-submit-box select { flex: 1; min-width: 190px; }
+.week-approval-heading {
+  align-items: flex-end;
+  border-bottom: 2px solid var(--pine);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 16px 0 10px;
+  padding-bottom: 9px;
+}
+.week-label { color: var(--pine); font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 700; }
+.week-total { color: var(--pine); font-family: 'Space Mono', monospace; font-size: 20px; font-weight: 700; white-space: nowrap; }
+.approval-status { color: var(--ink-soft); font-size: 14px; margin-top: 3px; }
+.approval-status.pending { color: #8a6800; font-weight: 600; }
+.approval-status.approved { color: var(--pine); font-weight: 700; }
+.approval-status.returned { color: var(--punch-red); font-weight: 700; }
+.week-log { display: grid; gap: 9px; }
+.week-day-card { border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.week-day-heading {
+  align-items: center;
+  background: var(--pine-tint);
+  color: var(--pine);
+  display: flex;
+  font-family: 'Barlow Condensed', sans-serif;
+  justify-content: space-between;
+  padding: 8px 10px;
+}
+.week-day-heading strong { font-size: 16px; }
+.week-day-heading span { font-family: 'Space Mono', monospace; font-size: 12px; }
+.week-day-empty { color: var(--ink-soft); font-style: italic; padding: 9px 10px; }
+.week-event-row {
+  align-items: baseline;
+  border-top: 1px dashed var(--line);
+  display: grid;
+  font-size: 14px;
+  gap: 10px;
+  grid-template-columns: 82px minmax(0, 1fr);
+  padding: 7px 10px;
+}
+.week-event-time { color: var(--ink-soft); font-family: 'Space Mono', monospace; font-size: 11px; }
+.approval-card {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--brass);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  padding: 13px;
+}
+.approval-card.completed { border-left-color: var(--pine); }
+.approval-card-top { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; }
+.approval-card-title { color: var(--pine); font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 700; }
+.approval-card-meta { color: var(--ink-soft); font-size: 13px; margin-top: 2px; }
+.approval-card-total { color: var(--pine); font-family: 'Space Mono', monospace; font-size: 18px; font-weight: 700; white-space: nowrap; }
+.approval-card details { margin-top: 11px; }
+.approval-card summary { color: var(--pine); cursor: pointer; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; }
+.approval-card details .week-log { margin-top: 10px; }
+.approval-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 12px; }
+.approval-return-note { background: #fff5f2; border-left: 3px solid var(--punch-red); margin-top: 10px; padding: 8px 10px; }
+
+@media (max-width: 520px) {
+  .week-picker-row, .approval-submit-box { align-items: stretch; flex-direction: column; }
+  .week-picker-row input, .approval-submit-box select, .week-picker-row .btn, .approval-submit-box .btn { width: 100%; }
+  .week-approval-heading, .approval-card-top { align-items: flex-start; flex-direction: column; }
+  .week-event-row { grid-template-columns: 70px minmax(0, 1fr); gap: 6px; }
+  .approval-card-total { font-size: 16px; }
+}
