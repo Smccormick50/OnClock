@@ -60,6 +60,30 @@ function setCellValue(xml, ref, type, value) {
   return xml.slice(0, m.index) + newCell + xml.slice(m.index + m[0].length);
 }
 
+// Updates the cached numeric result stored beside an existing formula.
+// Excel recalculates formulas when the workbook opens, but browser previews
+// and some mobile viewers only display the cached <v> result. Keeping those
+// values current makes the row totals and the mileage totals visible
+// everywhere without removing the template's formulas.
+function setFormulaCachedValue(xml, ref, value) {
+  var re = new RegExp('(<c r="' + ref + '"[^>]*>)([\\s\\S]*?)(</c>)');
+  var m = xml.match(re);
+  if (!m) {
+    console.warn("Mileage template: formula cell " + ref + " not found — template may have changed.");
+    return xml;
+  }
+  var numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) numericValue = 0;
+  var inner = m[2];
+  if (/<v>[\s\S]*?<\/v>/.test(inner)) {
+    inner = inner.replace(/<v>[\s\S]*?<\/v>/, "<v>" + numericValue + "</v>");
+  } else {
+    inner += "<v>" + numericValue + "</v>";
+  }
+  var newCell = m[1] + inner + m[3];
+  return xml.slice(0, m.index) + newCell + xml.slice(m.index + m[0].length);
+}
+
 // trips: [{ beginDate, endDate (YYYY-MM-DD), description, beginOdometer, endOdometer }]
 // profile: { name, employeeNumber, deptStore }
 async function exportMileageLog(profile, trips) {
@@ -92,14 +116,28 @@ async function exportMileageLog(profile, trips) {
   xml = setCellValue(xml, "I8", "text", profile.employeeNumber || "");
   xml = setCellValue(xml, "P8", "number", Number(profile.deptStore) || 0);
 
+  var totalMiles = 0;
+  var totalAmount = 0;
   trips.forEach(function (t, i) {
     var r = MILEAGE_FIRST_ROW + i;
+    var beginOdometer = Number(t.beginOdometer) || 0;
+    var endOdometer = Number(t.endOdometer) || 0;
+    var miles = Math.max(0, endOdometer - beginOdometer);
+    var amount = Number((miles * 0.73).toFixed(2));
+    totalMiles += miles;
+    totalAmount += amount;
     xml = setCellValue(xml, "B" + r, "number", excelDateSerial(t.beginDate));
     xml = setCellValue(xml, "D" + r, "number", excelDateSerial(t.endDate));
     xml = setCellValue(xml, "F" + r, "text", t.description || "");
-    xml = setCellValue(xml, "M" + r, "number", Number(t.beginOdometer) || 0);
-    xml = setCellValue(xml, "N" + r, "number", Number(t.endOdometer) || 0);
+    xml = setCellValue(xml, "M" + r, "number", beginOdometer);
+    xml = setCellValue(xml, "N" + r, "number", endOdometer);
+    xml = setFormulaCachedValue(xml, "K" + r, Number(profile.deptStore) || 0);
+    xml = setFormulaCachedValue(xml, "O" + r, miles);
+    xml = setFormulaCachedValue(xml, "P" + r, amount);
   });
+
+  xml = setFormulaCachedValue(xml, "O55", totalMiles);
+  xml = setFormulaCachedValue(xml, "P55", Number(totalAmount.toFixed(2)));
 
   zip.file("xl/worksheets/sheet1.xml", xml);
   var out = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
