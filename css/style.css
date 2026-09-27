@@ -189,6 +189,31 @@ header.top .links a, header.top .links button {
 .todo-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
 .todo-row input[type="checkbox"] { width: 19px; height: 19px; accent-color: var(--pine); cursor: pointer; flex-shrink: 0; }
 .todo-row .todo-text { flex: 1; font-size: 15px; }
+.todo-section-label {
+  color: var(--pine);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 12px 0 5px;
+  text-transform: uppercase;
+}
+.assigned-todo { align-items: flex-start; }
+.todo-assigned-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.todo-assigned-meta { color: var(--ink-soft); font-size: 12px; margin-top: 2px; }
+.assigned-todo.awaiting-approval .todo-text { color: var(--ink-soft); text-decoration: line-through; }
+.assigned-task-badge {
+  border-radius: 999px;
+  flex-shrink: 0;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.assigned-task-badge.assigned { background: #fff1c7; color: #7a5800; }
+.assigned-task-badge.completed { background: #fce1d8; color: var(--punch-red); }
+.assigned-task-badge.approved { background: #dceadf; color: #146c43; }
 .log-empty { padding: 16px 0; color: var(--ink-soft); font-size: 14px; font-style: italic; }
 
 .edit-inline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
@@ -346,6 +371,25 @@ header.top .links a, header.top .links button {
 .access-badge.admin, .history-status.archived { background: #dceadf; color: #146c43; }
 .access-badge.employee, .history-status.completed { background: #fff1c7; color: #7a5800; }
 .compact-btn { font-size: 13px; padding: 6px 10px; }
+.task-assign-form { display: grid; gap: 9px; grid-template-columns: minmax(180px, 0.75fr) minmax(260px, 1.5fr) auto; }
+.task-assign-form select, .task-assign-form input {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 16px;
+  padding: 9px 10px;
+}
+.task-assign-status { margin: 8px 0 0; min-height: 20px; text-align: left; }
+.assigned-task-group-title { color: var(--pine); font-family: 'Barlow Condensed', sans-serif; font-size: 18px; margin: 20px 0 7px; }
+.assigned-task-card { border: 1px solid var(--line); border-left: 5px solid var(--brass); border-radius: 8px; margin-bottom: 9px; padding: 11px 12px; }
+.assigned-task-card.completed { border-left-color: var(--punch-red); }
+.assigned-task-card.approved { border-left-color: var(--pine); }
+.assigned-task-card-top { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; }
+.assigned-task-employee { color: var(--pine); font-family: 'Barlow Condensed', sans-serif; font-size: 17px; font-weight: 700; }
+.assigned-task-text { font-size: 15px; margin-top: 2px; overflow-wrap: anywhere; }
+.assigned-task-card-meta { color: var(--ink-soft); font-size: 12px; margin: 6px 0 9px; }
 .date-picker-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .date-picker-row input[type="date"] {
   padding: 8px 10px;
@@ -806,6 +850,9 @@ header.top .links a, header.top .links button {
 .approval-return-note { background: #fff5f2; border-left: 3px solid var(--punch-red); margin-top: 10px; padding: 8px 10px; }
 
 @media (max-width: 520px) {
+  .task-assign-form { grid-template-columns: 1fr; }
+  .assigned-todo { align-items: flex-start; flex-wrap: wrap; }
+  .assigned-todo .assigned-task-badge { margin-left: 29px; }
   .week-picker-row, .approval-submit-box { align-items: stretch; flex-direction: column; }
   .week-picker-row input, .approval-submit-box select, .week-picker-row .btn, .approval-submit-box .btn { width: 100%; }
   .week-approval-heading, .approval-card-top { align-items: flex-start; flex-direction: column; }
