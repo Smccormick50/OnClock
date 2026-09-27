@@ -13,10 +13,12 @@
   var unsubHistoryEntries = null;
   var unsubAudit = null;
   var unsubCompletedApprovals = null;
+  var unsubAssignedTasks = null;
   var historyEntryDocs = [];
   var archiveDocs = [];
   var auditDocs = [];
   var completedApprovalDocs = [];
+  var assignedTaskDocs = [];
 
   function usersCol() { return db.collection("users"); }
   function entryRefFor(uid, dateStr) { return db.collection("entries").doc(entryId(uid, dateStr)); }
@@ -30,6 +32,7 @@
       populatePeriodEmployeeDropdown();
       populateAuditEmployeeDropdown();
       populateCompletedApprovalEmployeeDropdown();
+      populateAssignedTaskEmployeeDropdown();
     }, function (err) { console.error("users snapshot error", err); });
   }
 
@@ -70,6 +73,20 @@
     var previous = select.value;
     select.innerHTML = '<option value="">All employees</option>';
     users.forEach(function (user) {
+      var option = document.createElement("option");
+      option.value = user.id;
+      option.textContent = user.name || user.email || "Employee";
+      select.appendChild(option);
+    });
+    if (previous && users.some(function (user) { return user.id === previous; })) select.value = previous;
+  }
+
+  function populateAssignedTaskEmployeeDropdown() {
+    var select = document.getElementById("assignedTaskEmployee");
+    if (!select) return;
+    var previous = select.value;
+    select.innerHTML = '<option value="">Select employee</option>';
+    users.filter(function (user) { return !currentUser || user.id !== currentUser.uid; }).forEach(function (user) {
       var option = document.createElement("option");
       option.value = user.id;
       option.textContent = user.name || user.email || "Employee";
@@ -178,6 +195,154 @@
     });
   }
 
+  // ---------- manager-assigned tasks ----------
+  function subscribeAssignedTasks() {
+    unsubAssignedTasks = db.collection("assignedTasks").where("assignedByUid", "==", currentUser.uid)
+      .onSnapshot(function (snap) {
+        assignedTaskDocs = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+        renderAssignedTasks();
+      }, function (err) {
+        console.error("assigned tasks error", err);
+        document.getElementById("assignedTasksList").innerHTML = '<div class="log-empty">Assigned tasks could not load. Publish the updated Firestore rules, then try again.</div>';
+      });
+  }
+
+  function assignTask() {
+    var employeeUid = document.getElementById("assignedTaskEmployee").value;
+    var text = document.getElementById("assignedTaskText").value.trim();
+    var status = document.getElementById("taskAssignStatus");
+    var employee = users.find(function (user) { return user.id === employeeUid; });
+    if (!employee || !text) {
+      status.textContent = "Select an employee and enter a task.";
+      return;
+    }
+    var button = document.getElementById("assignTaskBtn");
+    button.disabled = true;
+    status.textContent = "Assigning task…";
+    db.collection("assignedTasks").add({
+      employeeUid: employee.id,
+      employeeName: employee.name || employee.email || "Employee",
+      assignedByUid: currentUser.uid,
+      assignedByName: currentProfile.name || currentProfile.email || "Manager",
+      text: text,
+      status: "assigned",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdAtIso: new Date().toISOString(),
+      lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(function () {
+      document.getElementById("assignedTaskText").value = "";
+      status.textContent = "Task assigned to " + (employee.name || employee.email || "employee") + ".";
+      return writeAudit("assigned_task_created", employee, "", "Assigned task: " + text);
+    }).catch(function (err) {
+      console.error("assign task error", err);
+      status.textContent = "The task could not be assigned. Publish the updated Firestore rules, then try again.";
+    }).finally(function () { button.disabled = false; });
+  }
+
+  function approveAssignedTask(task) {
+    var ref = db.collection("assignedTasks").doc(task.id);
+    db.runTransaction(function (tx) {
+      return tx.get(ref).then(function (snap) {
+        if (!snap.exists || snap.data().status !== "completed") throw new Error("This task is no longer waiting for approval.");
+        tx.update(ref, {
+          status: "approved",
+          approvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          approvedAtIso: new Date().toISOString(),
+          approvedByUid: currentUser.uid,
+          approvedByName: currentProfile.name || currentProfile.email || "Manager",
+          lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+    }).then(function () {
+      var employee = users.find(function (user) { return user.id === task.employeeUid; }) || { id: task.employeeUid, name: task.employeeName };
+      return writeAudit("assigned_task_approved", employee, "", "Approved completed task: " + task.text);
+    }).catch(function (err) {
+      console.error("approve assigned task error", err);
+      alert(err.message || "The task could not be approved. Please try again.");
+    });
+  }
+
+  function cancelAssignedTask(task) {
+    if (!confirm("Cancel this assigned task?")) return;
+    db.collection("assignedTasks").doc(task.id).delete().then(function () {
+      var employee = users.find(function (user) { return user.id === task.employeeUid; }) || { id: task.employeeUid, name: task.employeeName };
+      return writeAudit("assigned_task_cancelled", employee, "", "Cancelled assigned task: " + task.text);
+    }).catch(function (err) {
+      console.error("cancel assigned task error", err);
+      alert("The task could not be cancelled. Please try again.");
+    });
+  }
+
+  function assignedTaskTime(task) {
+    var value = task.approvedAt || task.completedAt || task.createdAt || task.approvedAtIso || task.completedAtIso || task.createdAtIso;
+    var date = value && typeof value.toDate === "function" ? value.toDate() : new Date(value || 0);
+    return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+  }
+
+  function renderAssignedTasks() {
+    var list = document.getElementById("assignedTasksList");
+    if (!list) return;
+    list.innerHTML = "";
+    var groups = [
+      { status: "completed", title: "Ready for your approval" },
+      { status: "assigned", title: "Waiting on employee" },
+      { status: "approved", title: "Approved" }
+    ];
+    var found = false;
+    groups.forEach(function (group) {
+      var tasks = assignedTaskDocs.filter(function (task) { return task.status === group.status; })
+        .sort(function (a, b) { return assignedTaskTime(b) - assignedTaskTime(a); });
+      if (!tasks.length) return;
+      found = true;
+      var heading = document.createElement("h3");
+      heading.className = "assigned-task-group-title";
+      heading.textContent = group.title + " (" + tasks.length + ")";
+      list.appendChild(heading);
+      tasks.forEach(function (task) {
+        var card = document.createElement("div");
+        card.className = "assigned-task-card " + task.status;
+        var top = document.createElement("div");
+        top.className = "assigned-task-card-top";
+        var identity = document.createElement("div");
+        var employee = document.createElement("div");
+        employee.className = "assigned-task-employee";
+        employee.textContent = task.employeeName || "Employee";
+        var taskText = document.createElement("div");
+        taskText.className = "assigned-task-text";
+        taskText.textContent = task.text || "Assigned task";
+        identity.appendChild(employee);
+        identity.appendChild(taskText);
+        var badge = document.createElement("span");
+        badge.className = "assigned-task-badge " + task.status;
+        badge.textContent = task.status === "completed" ? "Needs approval" : (task.status === "approved" ? "Approved" : "Assigned");
+        top.appendChild(identity);
+        top.appendChild(badge);
+        card.appendChild(top);
+        var meta = document.createElement("div");
+        meta.className = "assigned-task-card-meta";
+        if (task.status === "completed") meta.textContent = "Completed " + fmtDateTimeCentral(task.completedAt || task.completedAtIso);
+        else if (task.status === "approved") meta.textContent = "Approved " + fmtDateTimeCentral(task.approvedAt || task.approvedAtIso);
+        else meta.textContent = "Assigned " + fmtDateTimeCentral(task.createdAt || task.createdAtIso);
+        card.appendChild(meta);
+        if (task.status === "completed") {
+          var approve = document.createElement("button");
+          approve.className = "btn compact-btn";
+          approve.textContent = "Approve Completion";
+          approve.onclick = function () { approveAssignedTask(task); };
+          card.appendChild(approve);
+        } else if (task.status === "assigned") {
+          var cancel = document.createElement("button");
+          cancel.className = "btn secondary compact-btn";
+          cancel.textContent = "Cancel Task";
+          cancel.onclick = function () { cancelAssignedTask(task); };
+          card.appendChild(cancel);
+        }
+        list.appendChild(card);
+      });
+    });
+    if (!found) list.innerHTML = '<div class="log-empty">You have not assigned any tasks yet.</div>';
+  }
+
   function approvalTimeValue(approval) {
     var value = approval.approvedAt || approval.approvedAtIso;
     var date = value && typeof value.toDate === "function" ? value.toDate() : new Date(value || 0);
@@ -249,6 +414,7 @@
       history: document.getElementById("historyTab"),
       payperiod: document.getElementById("payPeriodTab"),
       completed: document.getElementById("completedApprovalsTab"),
+      tasks: document.getElementById("taskApprovalsTab"),
       employees: document.getElementById("employeesTab"),
       audit: document.getElementById("auditTab")
     };
@@ -257,6 +423,7 @@
       history: document.getElementById("tabHistoryBtn"),
       payperiod: document.getElementById("tabPayPeriodBtn"),
       completed: document.getElementById("tabCompletedApprovalsBtn"),
+      tasks: document.getElementById("tabTaskApprovalsBtn"),
       employees: document.getElementById("tabEmployeesBtn"),
       audit: document.getElementById("tabAuditBtn")
     };
@@ -266,6 +433,7 @@
     });
     if (tab === "history" && !unsubArchives) subscribeHistory();
     if (tab === "completed" && !unsubCompletedApprovals) subscribeCompletedApprovals();
+    if (tab === "tasks" && !unsubAssignedTasks) subscribeAssignedTasks();
     if (tab === "audit" && !unsubAudit) subscribeAudit();
   }
 
@@ -552,6 +720,10 @@
       completed_task_added: "Task completed",
       completed_task_edited: "Completed task edited",
       completed_task_deleted: "Completed task deleted",
+      assigned_task_created: "Task assigned",
+      assigned_task_completed: "Assigned task completed",
+      assigned_task_approved: "Assigned task approved",
+      assigned_task_cancelled: "Assigned task cancelled",
       role_changed: "Access changed",
       week_submitted: "Work week submitted",
       week_approved: "Work week approved",
@@ -985,12 +1157,17 @@
     document.getElementById("tabHistoryBtn").onclick = function () { switchTab("history"); };
     document.getElementById("tabPayPeriodBtn").onclick = function () { switchTab("payperiod"); };
     document.getElementById("tabCompletedApprovalsBtn").onclick = function () { switchTab("completed"); };
+    document.getElementById("tabTaskApprovalsBtn").onclick = function () { switchTab("tasks"); };
     document.getElementById("tabEmployeesBtn").onclick = function () { switchTab("employees"); };
     document.getElementById("tabAuditBtn").onclick = function () { switchTab("audit"); };
     document.getElementById("historyEmployee").onchange = renderCombinedHistory;
     document.getElementById("historyMonth").onchange = renderCombinedHistory;
     document.getElementById("auditEmployee").onchange = renderAudit;
     document.getElementById("completedApprovalEmployee").onchange = renderCompletedApprovals;
+    document.getElementById("assignTaskBtn").onclick = assignTask;
+    document.getElementById("assignedTaskText").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") assignTask();
+    });
 
     var defaults = defaultPeriodRange();
     document.getElementById("periodStart").value = defaults.start;

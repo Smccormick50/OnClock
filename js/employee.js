@@ -11,6 +11,8 @@
   var unsubArchives = null;
   var unsubTodos = null;
   var todoItems = []; // the running, not-date-scoped to-do list
+  var unsubAssignedTasks = null;
+  var assignedTasks = []; // manager-assigned items shown on this personal list
   var unsubMileage = null;
   var mileageTrips = []; // pending, not-yet-exported mileage trips
   var editingTripIndex = null;
@@ -361,6 +363,16 @@
   function saveTodos(items) {
     return todosRef().set({ items: items });
   }
+  function subscribeAssignedTasks() {
+    unsubAssignedTasks = db.collection("assignedTasks").where("employeeUid", "==", currentUser.uid)
+      .onSnapshot(function (snap) {
+        assignedTasks = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+        assignedTasks.sort(function (a, b) {
+          return String(a.createdAtIso || "").localeCompare(String(b.createdAtIso || ""));
+        });
+        renderTodos();
+      }, function (err) { console.error("assigned tasks snapshot error", err); });
+  }
   function doAddTodo(text) {
     text = text.trim();
     if (!text) return;
@@ -395,6 +407,38 @@
     data.completedTodos.push({ text: item.text, completedAt: new Date().toISOString() });
     saveDay(todayStr, data, "completed_task_added", "Completed task: " + item.text);
   }
+  function doCompleteAssignedTask(task) {
+    if (!task || task.status !== "assigned") return;
+    var ref = db.collection("assignedTasks").doc(task.id);
+    var completedAtIso = new Date().toISOString();
+    db.runTransaction(function (tx) {
+      return tx.get(ref).then(function (snap) {
+        if (!snap.exists || snap.data().status !== "assigned") throw new Error("This task is no longer awaiting completion.");
+        tx.update(ref, {
+          status: "completed",
+          completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          completedAtIso: completedAtIso,
+          completedByUid: currentUser.uid,
+          completedByName: currentProfile.name || currentProfile.email || "Employee",
+          lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+    }).then(function () {
+      var data = clone(getDayData(todayStr));
+      data.completedTodos = data.completedTodos || [];
+      data.completedTodos.push({
+        text: task.text,
+        completedAt: completedAtIso,
+        assignedTaskId: task.id,
+        assignedByName: task.assignedByName || "Manager"
+      });
+      saveDay(todayStr, data, "assigned_task_completed", "Completed manager-assigned task: " + task.text)
+        .catch(function (err) { console.error("assigned task work-log error", err); });
+    }).catch(function (err) {
+      console.error("assigned task completion error", err);
+      alert(err.message || "The assigned task could not be completed. Please try again.");
+    });
+  }
   function doDeleteCompletedTodo(dateStr, idx) {
     var data = clone(getDayData(dateStr));
     var removed = (data.completedTodos || []).splice(idx, 1)[0];
@@ -413,9 +457,48 @@
   function renderTodos() {
     var listEl = document.getElementById("todoList");
     listEl.innerHTML = "";
-    if (todoItems.length === 0) {
+    var visibleAssigned = assignedTasks.filter(function (task) { return task.status === "assigned" || task.status === "completed"; });
+    if (todoItems.length === 0 && visibleAssigned.length === 0) {
       listEl.innerHTML = '<li class="log-empty">Nothing on your list.</li>';
       return;
+    }
+    if (visibleAssigned.length) {
+      var assignedHeading = document.createElement("li");
+      assignedHeading.className = "todo-section-label";
+      assignedHeading.textContent = "Assigned by manager";
+      listEl.appendChild(assignedHeading);
+      visibleAssigned.forEach(function (task) {
+        var li = document.createElement("li");
+        li.className = "todo-row assigned-todo" + (task.status === "completed" ? " awaiting-approval" : "");
+        var checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = task.status === "completed";
+        checkbox.disabled = task.status === "completed";
+        checkbox.onchange = function () { doCompleteAssignedTask(task); };
+        var copy = document.createElement("div");
+        copy.className = "todo-assigned-copy";
+        var text = document.createElement("span");
+        text.className = "todo-text";
+        text.textContent = task.text || "Assigned task";
+        var meta = document.createElement("span");
+        meta.className = "todo-assigned-meta";
+        meta.textContent = "Assigned by " + (task.assignedByName || "Manager");
+        copy.appendChild(text);
+        copy.appendChild(meta);
+        var badge = document.createElement("span");
+        badge.className = "assigned-task-badge " + task.status;
+        badge.textContent = task.status === "completed" ? "Waiting for approval" : "Assigned";
+        li.appendChild(checkbox);
+        li.appendChild(copy);
+        li.appendChild(badge);
+        listEl.appendChild(li);
+      });
+    }
+    if (todoItems.length) {
+      var personalHeading = document.createElement("li");
+      personalHeading.className = "todo-section-label";
+      personalHeading.textContent = "My personal tasks";
+      listEl.appendChild(personalHeading);
     }
     todoItems.forEach(function (item, idx) {
       var li = document.createElement("li");
@@ -1253,10 +1336,16 @@
       if (e.key === "Enter") document.getElementById("todoAddBtn").click();
     });
     document.getElementById("todoExportPdfBtn").onclick = function () {
-      exportTodoListPdf(currentProfile.name, todoItems);
+      var exportItems = todoItems.concat(assignedTasks.filter(function (task) { return task.status === "assigned"; }).map(function (task) {
+        return { text: task.text + " (Assigned by " + (task.assignedByName || "Manager") + ")" };
+      }));
+      exportTodoListPdf(currentProfile.name, exportItems);
     };
     document.getElementById("todoExportCsvBtn").onclick = function () {
-      exportTodoListCsv(currentProfile.name, todoItems);
+      var exportItems = todoItems.concat(assignedTasks.filter(function (task) { return task.status === "assigned"; }).map(function (task) {
+        return { text: task.text + " (Assigned by " + (task.assignedByName || "Manager") + ")" };
+      }));
+      exportTodoListCsv(currentProfile.name, exportItems);
     };
     document.getElementById("mileageEmpNum").addEventListener("change", function (e) {
       saveEmployeeInfo("employeeNumber", e.target.value.trim());
@@ -1307,6 +1396,7 @@
     subscribeHistory();
     subscribeArchives();
     subscribeTodos();
+    subscribeAssignedTasks();
     subscribeMileage();
     subscribeApproverDirectory();
     subscribeMyWeeklyApprovals();
@@ -1321,12 +1411,14 @@
     if (unsubHistory) { unsubHistory(); unsubHistory = null; }
     if (unsubArchives) { unsubArchives(); unsubArchives = null; }
     if (unsubTodos) { unsubTodos(); unsubTodos = null; }
+    if (unsubAssignedTasks) { unsubAssignedTasks(); unsubAssignedTasks = null; }
     if (unsubMileage) { unsubMileage(); unsubMileage = null; }
     if (unsubApproverUsers) { unsubApproverUsers(); unsubApproverUsers = null; }
     if (unsubMyApprovals) { unsubMyApprovals(); unsubMyApprovals = null; }
     if (unsubAssignedApprovals) { unsubAssignedApprovals(); unsubAssignedApprovals = null; }
     docCache = {};
     todoItems = [];
+    assignedTasks = [];
     mileageTrips = [];
     approverUsers = [];
     myWeeklyApprovals = {};
