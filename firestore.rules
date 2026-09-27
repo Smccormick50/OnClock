@@ -141,6 +141,54 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
+    // Tasks assigned by an administrator to one employee. The employee can
+    // only mark an assigned task complete; the administrator who assigned it
+    // can approve the completion or cancel it before completion.
+    match /assignedTasks/{taskId} {
+      allow read: if isSignedIn() && (
+                    isAdmin()
+                    || resource.data.employeeUid == request.auth.uid
+                  );
+
+      allow create: if isAdmin()
+                    && request.resource.data.assignedByUid == request.auth.uid
+                    && request.resource.data.employeeUid is string
+                    && request.resource.data.employeeUid != request.auth.uid
+                    && request.resource.data.text is string
+                    && request.resource.data.status == 'assigned';
+
+      allow update: if (
+                      isSignedIn()
+                      && resource.data.employeeUid == request.auth.uid
+                      && resource.data.status == 'assigned'
+                      && request.resource.data.status == 'completed'
+                      && request.resource.data.employeeUid == resource.data.employeeUid
+                      && request.resource.data.assignedByUid == resource.data.assignedByUid
+                      && request.resource.data.text == resource.data.text
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'status', 'completedAt', 'completedAtIso', 'completedByUid',
+                        'completedByName', 'lastUpdatedAt'
+                      ])
+                    )
+                    || (
+                      isAdmin()
+                      && resource.data.assignedByUid == request.auth.uid
+                      && resource.data.status == 'completed'
+                      && request.resource.data.status == 'approved'
+                      && request.resource.data.employeeUid == resource.data.employeeUid
+                      && request.resource.data.assignedByUid == resource.data.assignedByUid
+                      && request.resource.data.text == resource.data.text
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'status', 'approvedAt', 'approvedAtIso', 'approvedByUid',
+                        'approvedByName', 'lastUpdatedAt'
+                      ])
+                    );
+
+      allow delete: if isAdmin()
+                    && resource.data.assignedByUid == request.auth.uid
+                    && resource.data.status == 'assigned';
+    }
+
     // Each employee's pending mileage log — one doc per user, holding
     // trips not yet exported/submitted for reimbursement. Owner-only,
     // same reasoning as todos: this is a personal working list before

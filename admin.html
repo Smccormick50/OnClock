@@ -51,6 +51,7 @@
     <button class="tab-btn" id="tabHistoryBtn">History</button>
     <button class="tab-btn" id="tabPayPeriodBtn">Pay Period</button>
     <button class="tab-btn" id="tabCompletedApprovalsBtn">Completed Approvals</button>
+    <button class="tab-btn" id="tabTaskApprovalsBtn">Task Approvals</button>
     <button class="tab-btn" id="tabEmployeesBtn">Employees</button>
     <button class="tab-btn" id="tabAuditBtn">Audit Log</button>
   </div>
@@ -111,6 +112,21 @@
       <span id="completedApprovalSummary" class="archive-filter-summary">Open this tab to load approvals.</span>
     </div>
     <div id="completedApprovalsList"><div class="log-empty">Open this tab to load approvals.</div></div>
+  </div>
+
+  <div class="panel" id="taskApprovalsTab" style="display:none;">
+    <div class="archive-heading-row">
+      <h2>Task Approvals</h2>
+      <span class="archive-live-badge">Manager assigned</span>
+    </div>
+    <p class="archive-intro">Assign work to an employee's personal to-do page. When they mark it complete, it returns here for your approval.</p>
+    <div class="task-assign-form">
+      <select id="assignedTaskEmployee"><option value="">Select employee</option></select>
+      <input type="text" id="assignedTaskText" maxlength="240" placeholder="Task to assign">
+      <button class="btn" id="assignTaskBtn">Assign Task</button>
+    </div>
+    <div id="taskAssignStatus" class="status-note task-assign-status"></div>
+    <div id="assignedTasksList"><div class="log-empty">Open this tab to load assigned tasks.</div></div>
   </div>
 
   <div class="panel" id="employeesTab" style="display:none;">
