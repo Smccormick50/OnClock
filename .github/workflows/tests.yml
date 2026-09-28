@@ -1,0 +1,19 @@
+name: Tests
+
+# Runs on every push and pull request. If this goes red, something that
+# used to work (timezone math, the mileage form fill, the nightly
+# archive's date logic, a missing element ID, ...) just broke.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test

@@ -2,10 +2,20 @@ name: Archive daily logs
 
 on:
   schedule:
-    # 06:10 UTC is always after midnight in America/Chicago:
-    # 1:10am during daylight time and 12:10am during standard time.
-    # The script archives the completed previous Central-calendar day.
-    - cron: "10 6 * * *"
+    # Each run archives *yesterday* (Central time), so these must fire
+    # AFTER midnight Central in both daylight-saving states — a cron
+    # can only be written in UTC:
+    #   - "30 6 * * *"   = 1:30am CDT / 12:30am CST  (the main run)
+    #   - "30 10 * * *"  = 5:30am CDT / 4:30am CST   (a backup attempt)
+    # Both are after midnight either way. GitHub doesn't guarantee
+    # scheduled runs fire on time — on this repo they've landed 5-7
+    # hours late — but a delayed run still means "yesterday", so lateness
+    # is harmless. Running twice is harmless too: archiving is an
+    # idempotent overwrite. (An earlier version fired at 11:59pm Central,
+    # which only worked because GitHub happened to be late; a punctual
+    # run would have archived the day *before* the one that was ending.)
+    - cron: "30 6 * * *"
+    - cron: "30 10 * * *"
   workflow_dispatch:
     inputs:
       date:
