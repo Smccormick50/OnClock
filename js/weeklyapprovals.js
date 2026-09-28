@@ -1,18 +1,23 @@
 // Shared Monday-Sunday work-week approval helpers.
 // Loaded by both the employee and administrator pages.
 
+// Pure calendar math on YYYY-MM-DD strings (done in UTC, so it can't
+// be thrown off by the device's timezone or a daylight-saving change).
+// The earlier version built the date in the device's timezone but
+// formatted it in Central, which returned the wrong day for devices
+// set far east of Central (e.g. "Monday of Thursday" came back as
+// Sunday on a device set to Tokyo).
 function shiftWorkDate(dateStr, deltaDays) {
-  var date = parseLocalDate(dateStr);
-  date.setDate(date.getDate() + deltaDays);
-  return localDateStr(date);
+  var p = dateStr.split("-").map(Number);
+  var d = new Date(Date.UTC(p[0], p[1] - 1, p[2] + deltaDays));
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
 }
 
 function mondayForWorkDate(dateStr) {
-  var date = parseLocalDate(dateStr);
-  var weekday = date.getDay(); // 0 = Sunday
+  var p = dateStr.split("-").map(Number);
+  var weekday = new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay(); // 0 = Sunday
   var daysBack = weekday === 0 ? 6 : weekday - 1;
-  date.setDate(date.getDate() - daysBack);
-  return localDateStr(date);
+  return shiftWorkDate(dateStr, -daysBack);
 }
 
 function sundayForWorkWeek(mondayStr) {

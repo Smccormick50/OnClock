@@ -442,13 +442,9 @@
   var lastPeriodRange = null;
 
   function defaultPeriodRange() {
-    // Monday through today, this week.
-    var today = parseLocalDate(selectedDate);
-    var day = today.getDay(); // 0 = Sunday
-    var diffToMonday = day === 0 ? 6 : day - 1;
-    var monday = new Date(today);
-    monday.setDate(today.getDate() - diffToMonday);
-    return { start: localDateStr(monday), end: selectedDate };
+    // Monday through the selected date, this week — by the Central
+    // Time calendar, not the device's.
+    return { start: mondayForWorkDate(selectedDate), end: selectedDate };
   }
 
   function calcPayPeriod() {
@@ -1176,6 +1172,30 @@
     document.getElementById("periodCsvBtn").onclick = downloadPeriodCsv;
   }
 
+  // ---------- archive health banner ----------
+  // One-time check when the dashboard opens: are there recent days
+  // with live entries but no nightly archive? (Logic lives in
+  // archivehealth.js so it can be unit tested.) Entries from
+  // "yesterday" are given slack because the nightly job can land
+  // hours late; anything older than that should already be archived.
+  function checkArchiveHealth() {
+    var banner = document.getElementById("archiveHealthBanner");
+    if (!banner) return;
+    var today = localDateStr(new Date());
+    var cutoff = healthShiftDate(today, -1);
+    var since = healthShiftDate(today, -8);
+    Promise.all([
+      db.collection("entries").where("date", ">=", since).where("date", "<", cutoff).get(),
+      db.collection("archives").where("date", ">=", since).where("date", "<", cutoff).get()
+    ]).then(function (results) {
+      var entries = results[0].docs.map(function (d) { return d.data(); });
+      var archives = results[1].docs.map(function (d) { return d.data(); });
+      var message = archiveHealthMessage(findMissingArchives(entries, archives, cutoff));
+      banner.textContent = message;
+      banner.style.display = message ? "block" : "none";
+    }).catch(function (err) { console.error("archive health check error", err); });
+  }
+
   function showDashboard(user, profile) {
     currentUser = user;
     currentProfile = profile;
@@ -1185,6 +1205,7 @@
     document.getElementById("welcomeName").textContent = profile.name;
     subscribeUsers();
     subscribeEntriesForDate(selectedDate);
+    checkArchiveHealth();
   }
 
   function showNotAdmin() {
