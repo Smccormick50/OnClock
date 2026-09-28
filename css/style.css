@@ -859,3 +859,16 @@ header.top .links a, header.top .links button {
   .week-event-row { grid-template-columns: 70px minmax(0, 1fr); gap: 6px; }
   .approval-card-total { font-size: 16px; }
 }
+
+/* Archive health banner (admin) */
+.health-warning {
+  background: #FBEDE8;
+  border: 1px solid var(--punch-red);
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--punch-red);
+}
