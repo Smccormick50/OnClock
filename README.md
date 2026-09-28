@@ -32,6 +32,9 @@ The rules in `firestore.rules` keep each employee's time data private to
 them and their selected weekly approver, while letting anyone whose
 `users/{uid}` doc has `role: "admin"` read and edit everyone's data.
 Signed-in employees can see coworkers' names in the approver dropdown.
+Administrators can assign tasks to employees; an employee can only complete
+their own assigned tasks, and only the administrator who assigned a task can
+approve or cancel it.
 Audit records are append-only and only admins can review everyone's changes. The `archives` collection is
 read-only from the browser — it's only ever written by the GitHub
 Actions script below, using an admin service account that bypasses
@@ -86,10 +89,14 @@ shortly after midnight, whether or not anyone has the app open.
    variables > Actions > New repository secret**. Name it
    `FIREBASE_SERVICE_ACCOUNT`, and paste the *entire contents* of the
    `.json` file you downloaded as the value.
-3. That's it — `.github/workflows/archive-daily.yml` runs shortly after
-   midnight Central and archives the completed previous day. Change the
-   `TIME_ZONE` constant near the top of `scripts/archive-daily.js` if
-   your team is elsewhere.
+3. That's it — `.github/workflows/archive-daily.yml` runs at about
+   1:30am Central (with a backup attempt a few hours later) and
+   archives the completed previous day. It always means "yesterday", so
+   it doesn't matter if GitHub starts it hours late, and running twice
+   is harmless. Change the `TIME_ZONE` constant near the top of
+   `scripts/archive-daily.js` if your team is elsewhere — and the cron
+   times in the workflow, which must stay *after* midnight in your
+   zone (a test enforces this).
 4. **To test it or refresh an already-archived day:**
    push the repo, then on GitHub go to the **Actions** tab → **Archive
    daily logs** → **Run workflow**. Leave **date** blank to archive
@@ -142,9 +149,19 @@ shortly after midnight, whether or not anyone has the app open.
 - `firestore.indexes.json` — the one composite index the "Past days" query needs
 - `scripts/archive-daily.js` — the nightly archive job, run by GitHub Actions
 - `.github/workflows/archive-daily.yml` — schedules the after-midnight archive and lets you trigger it manually to test or refresh a date
+- `js/archivehealth.js` — the logic behind the admin dashboard's "archive looks behind" warning banner
+- `tests/` + `package.json` — the automated test suite (see "Health checks and tests" below)
+- `.github/workflows/tests.yml` — runs that test suite on every push
+- `CHANGELOG.md` — what changed, when, and why (including a log of past incidents and their causes)
 
 ## Recent additions
 
+- **Manager-assigned task approvals** — administrators can assign work from
+  the Task Approvals tab. The task appears alongside the employee's private
+  personal to-do list with the assigning manager's name. After the employee
+  marks it complete, it remains visible as waiting for approval until the
+  assigning manager approves it. Assigned, completed, approved, and cancelled
+  actions are recorded in the Audit Log.
 - **Cleaner employee Log screen** — the daily log and total appear first,
   manual punch corrections are tucked into a collapsible control, and work
   notes and to-dos follow underneath.
@@ -224,6 +241,7 @@ shortly after midnight, whether or not anyone has the app open.
 - `archives/{uid}_{YYYY-MM-DD}` — `{ uid, name, date, month, sessions, notes, totalMinutes, archivedAt }` — a frozen copy of a completed day, normally written shortly after midnight
 - `auditLogs/{autoId}` — append-only `{ actorUid, actorName, targetUid, targetName, date, action, detail, createdAt }` change history
 - `weeklyApprovals/{uid}_{YYYY-MM-DD}` — a frozen Monday-Sunday work-week snapshot with employee, selected approver, total hours, status, submission/approval timestamps, and all seven daily logs
+- `assignedTasks/{autoId}` — manager-assigned work with employee, assigning administrator, task text, status (`assigned`, `completed`, or `approved`), and completion/approval timestamps
 
 ## How the two kinds of PDF differ
 
@@ -238,6 +256,39 @@ file. The difference is just which data feeds it:
   *frozen* copy saved after the day ends. Grouped by month under
   the **Archives** tab (admin) or **My archived logs** (employee).
 
+## Health checks and tests
+
+**If the nightly archive stops working, you'll see it.** When an admin
+opens the dashboard, a red banner appears at the top if any recent day
+has logged activity but no saved archive. Each archive run also writes
+a summary (dates covered, logs archived) to its page under GitHub →
+Actions → *Archive daily logs*, so a green run that archived nothing is
+visible at a glance. Also worth doing once: GitHub → Settings →
+Notifications → Actions, and make sure failed-workflow emails are on.
+
+**Automated tests** live in `tests/` and run on every push (GitHub →
+Actions → *Tests*; a red X means something that used to work just
+broke). They cover the timezone math (deliberately run as if the device
+were set to several other timezones), the nightly archive's date logic
+and auto-clock-out, the mileage form fill against the real Excel
+template, work-week calculations, CSV building, and structural checks
+(every element ID the JS looks up exists, every file the pages load
+exists, every Firestore collection the app uses has a security rule,
+the service worker's cache list is complete, the nightly schedule fires
+after midnight Central).
+
+To run them on your own computer (needs Node.js 22 or newer):
+
+```
+npm install
+npm test
+```
+
+The Firestore security rules themselves are *not* covered by these
+tests (that would need Google's Java-based emulator) — the rules for
+weekly approvals and assigned tasks are the most intricate part of the
+app and are still checked by hand.
+
 ## Notes
 
 - Everything here — Firestore, Auth, and GitHub Actions — stays on
@@ -246,7 +297,15 @@ file. The difference is just which data feeds it:
   60 days with no commits at all. If that happens, the Actions tab
   will show it as disabled with a one-click **Enable workflow**
   button — worth remembering if logs stop showing up in Archives
-  after a long quiet stretch.
+  after a long quiet stretch. (The admin dashboard's red "archive looks
+  behind" banner will point this out within a couple of days.)
+- Free-tier headroom (Firebase Spark plan, as of Sep 2026): 50,000
+  document reads, 20,000 writes, and 20,000 deletes per day, plus 1 GiB
+  stored and 10 GiB/month outbound transfer. One heavy user peaked
+  around 1,000 reads and 200 writes on a single day, so a team in the
+  dozens fits comfortably. Check real numbers in the Firebase console
+  under Firestore → Usage. On the Spark plan there is no billing, so
+  exceeding a limit just pauses that service until the daily reset.
 - If you ever want to remove someone's access, delete their row from
   **Authentication > Users** in the Firebase console (their Firestore
   data stays, in case you need old timesheets).

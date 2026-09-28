@@ -1,0 +1,12 @@
+{
+  "name": "onclock",
+  "private": true,
+  "description": "Test tooling only. The site itself is plain static files served by GitHub Pages; the nightly archive job has its own package.json in scripts/.",
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\""
+  },
+  "devDependencies": {
+    "jszip": "^3.10.1",
+    "yaml": "^2.5.0"
+  }
+}
