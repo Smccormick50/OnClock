@@ -169,10 +169,27 @@ function dateRange(startStr, endStr) {
   return dates;
 }
 
-async function main() {
-  const now = new Date();
-  const isManualRun = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
+// Appends a markdown summary to this run's page on GitHub (the
+// "Summary" view). A run that goes green but archived nothing used to
+// be invisible; now every run states exactly what it did. Never allowed
+// to fail the run itself.
+function writeStepSummary(lines) {
+  const target = process.env.GITHUB_STEP_SUMMARY;
+  if (!target) return;
+  try {
+    require("fs").appendFileSync(target, lines.join("\n") + "\n");
+  } catch (err) {
+    console.warn("Could not write step summary:", err.message);
+  }
+}
+
+// Decides which dates a run should archive. Pure (takes the environment
+// and the current time as inputs, reads no clock, touches no database)
+// so it can be unit tested — this is exactly the logic that once
+// silently skipped every night, so it's worth pinning down.
+function resolveTargetDates(env, now) {
   const todayStr = tzDateStr(now, TIME_ZONE);
+  const isManualRun = env.GITHUB_EVENT_NAME === "workflow_dispatch";
 
   // Scheduled runs happen safely after midnight Central and archive
   // yesterday. Manual runs default to yesterday too. An explicitly
@@ -180,8 +197,8 @@ async function main() {
   // snapshot and never closes the live shift.
   let dates;
   if (isManualRun) {
-    const requestedDate = (process.env.ARCHIVE_DATE || "").trim();
-    const requestedEndDate = (process.env.ARCHIVE_END_DATE || "").trim();
+    const requestedDate = (env.ARCHIVE_DATE || "").trim();
+    const requestedEndDate = (env.ARCHIVE_END_DATE || "").trim();
     const validDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate);
     const validEndDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedEndDate);
 
@@ -203,6 +220,12 @@ async function main() {
   if (dates.some((dateStr) => dateStr > todayStr)) {
     throw new Error(`A future date cannot be archived. Today in ${TIME_ZONE} is ${todayStr}.`);
   }
+  return { dates, todayStr, isManualRun };
+}
+
+async function main() {
+  const now = new Date();
+  const { dates, isManualRun } = resolveTargetDates(process.env, now);
 
   console.log(`Running at ${tzHour(now, TIME_ZONE)}:xx ${TIME_ZONE} (isManualRun=${isManualRun}), targeting: ${dates.join(", ")}.`);
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -216,13 +239,28 @@ async function main() {
 
   let totalArchived = 0;
   let totalAutoClocked = 0;
+  const summaryRows = [];
   for (const dateStr of dates) {
     const result = await archiveOneDate(db, dateStr, now);
     totalArchived += result.archived;
     totalAutoClocked += result.autoClocked;
+    summaryRows.push(`| ${dateStr} | ${result.archived} | ${result.autoClocked} |`);
   }
 
   console.log(`Done. ${totalArchived} log(s) archived across ${dates.length} day(s), ${totalAutoClocked} auto-clocked-out.`);
+
+  writeStepSummary([
+    "## Archive daily logs",
+    `Ran at ${tzHour(now, TIME_ZONE)}:xx ${TIME_ZONE} (${isManualRun ? "manual" : "scheduled"}).`,
+    "",
+    "| Date | Logs archived | Open sessions auto-closed |",
+    "| --- | --- | --- |",
+    ...summaryRows,
+    "",
+    totalArchived === 0
+      ? "**No logs were archived.** That's expected only if nobody logged anything on these dates."
+      : `**${totalArchived} log(s) archived.**`,
+  ]);
 }
 
 if (require.main === module) {
@@ -234,6 +272,8 @@ if (require.main === module) {
 
 module.exports = {
   archiveOneDate,
+  resolveTargetDates,
+  dateRange,
   closeOpenSessions,
   copyEntryData,
   shiftDateStr,
