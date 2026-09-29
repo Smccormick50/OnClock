@@ -670,11 +670,18 @@
       listEl: listEl,
       order: rows.map(function (row) { return Number(row.dataset.idx); }) // current display order, by original todoItems index
     };
-    li.setPointerCapture(e.pointerId);
     li.classList.add("dragging");
-    li.addEventListener("pointermove", onTodoDragMove);
-    li.addEventListener("pointerup", endTodoDrag);
-    li.addEventListener("pointercancel", endTodoDrag);
+    // Listening on document (rather than capturing the pointer to the
+    // dragged row itself) is deliberate: this row gets repositioned in
+    // the DOM on every move as it's dragged past others, and moving the
+    // element currently holding pointer capture silently drops that
+    // capture on some browsers — the drag would die after one step,
+    // needing a fresh press to advance one more space. document never
+    // moves, so listening there keeps receiving events for the whole
+    // gesture no matter how many times the row gets reparented.
+    document.addEventListener("pointermove", onTodoDragMove);
+    document.addEventListener("pointerup", endTodoDrag);
+    document.addEventListener("pointercancel", endTodoDrag);
   }
   function onTodoDragMove(e) {
     if (!todoDrag || e.pointerId !== todoDrag.pointerId) return;
@@ -700,10 +707,9 @@
   function endTodoDrag(e) {
     if (!todoDrag || e.pointerId !== todoDrag.pointerId) return;
     var li = todoDrag.li, listEl = todoDrag.listEl;
-    li.removeEventListener("pointermove", onTodoDragMove);
-    li.removeEventListener("pointerup", endTodoDrag);
-    li.removeEventListener("pointercancel", endTodoDrag);
-    try { li.releasePointerCapture(todoDrag.pointerId); } catch (err) { /* already released */ }
+    document.removeEventListener("pointermove", onTodoDragMove);
+    document.removeEventListener("pointerup", endTodoDrag);
+    document.removeEventListener("pointercancel", endTodoDrag);
     li.classList.remove("dragging");
 
     var newOrderIndexes = Array.prototype.slice.call(listEl.querySelectorAll(".personal-todo"))
