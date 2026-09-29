@@ -11,6 +11,7 @@
   var unsubArchives = null;
   var unsubTodos = null;
   var todoItems = []; // the running, not-date-scoped to-do list
+  var selectedTodoKeys = {}; // temporary multi-select state for group reordering
   var unsubAssignedTasks = null;
   var assignedTasks = []; // manager-assigned items shown on this personal list
   var unsubMileage = null;
@@ -416,6 +417,37 @@
   function doReorderTodos(orderedItems) {
     saveTodos(orderedItems);
   }
+
+  function todoSelectionKey(item, idx) {
+    return String((item && item.createdAt) || ("todo-index-" + idx));
+  }
+
+  function setTodoRowSelected(li, selected) {
+    if (!li) return;
+    li.classList.toggle("todo-move-selected", selected);
+    var handle = li.querySelector(".todo-drag-handle");
+    if (!handle) return;
+    handle.setAttribute("aria-pressed", selected ? "true" : "false");
+    handle.setAttribute("aria-label", selected ? "Selected for group move" : "Tap to select, or drag to reorder");
+    handle.title = selected ? "Selected — drag to move the group" : "Tap to select, or drag to reorder";
+    handle.textContent = selected ? "✓" : "≡";
+  }
+
+  function toggleTodoSelection(li) {
+    var key = li && li.dataset.todoKey;
+    if (!key) return;
+    if (selectedTodoKeys[key]) delete selectedTodoKeys[key];
+    else selectedTodoKeys[key] = true;
+    setTodoRowSelected(li, !!selectedTodoKeys[key]);
+  }
+
+  function clearTodoSelection(listEl) {
+    selectedTodoKeys = {};
+    if (!listEl) return;
+    Array.prototype.forEach.call(listEl.querySelectorAll(".personal-todo"), function (row) {
+      setTodoRowSelected(row, false);
+    });
+  }
   function doCompleteTodo(idx) {
     var items = clone(todoItems);
     var item = items[idx];
@@ -523,6 +555,11 @@
   function renderTodos() {
     var listEl = document.getElementById("todoList");
     listEl.innerHTML = "";
+    var validTodoKeys = {};
+    todoItems.forEach(function (item, idx) { validTodoKeys[todoSelectionKey(item, idx)] = true; });
+    Object.keys(selectedTodoKeys).forEach(function (key) {
+      if (!validTodoKeys[key]) delete selectedTodoKeys[key];
+    });
     var visibleAssigned = assignedTasks.filter(function (task) { return task.status === "assigned" || task.status === "completed"; });
     if (todoItems.length === 0 && visibleAssigned.length === 0) {
       listEl.innerHTML = '<li class="log-empty">Nothing on your list.</li>';
@@ -575,13 +612,12 @@
       var li = document.createElement("li");
       li.className = "todo-row personal-todo";
       li.dataset.idx = String(idx);
+      li.dataset.todoKey = todoSelectionKey(item, idx);
 
       var dragHandle = document.createElement("button");
       dragHandle.type = "button";
       dragHandle.className = "todo-drag-handle";
-      dragHandle.title = "Drag to reorder";
-      dragHandle.setAttribute("aria-label", "Drag to reorder");
-      dragHandle.textContent = "\u2261";
+      dragHandle.setAttribute("aria-pressed", "false");
       dragHandle.onpointerdown = function (e) { startTodoDrag(e, li, personalListEl); };
 
       var priorityBtn = document.createElement("button");
@@ -649,6 +685,7 @@
       li.appendChild(textSpan);
       li.appendChild(editLink);
       li.appendChild(del);
+      setTodoRowSelected(li, !!selectedTodoKeys[li.dataset.todoKey]);
       personalListEl.appendChild(li);
     });
     if (todoItems.length) listEl.appendChild(personalListEl);
@@ -664,13 +701,20 @@
   function startTodoDrag(e, li, listEl) {
     e.preventDefault();
     var rows = Array.prototype.slice.call(listEl.querySelectorAll(".personal-todo"));
+    var movingSelectedGroup = !!selectedTodoKeys[li.dataset.todoKey];
+    var groupRows = movingSelectedGroup
+      ? rows.filter(function (row) { return !!selectedTodoKeys[row.dataset.todoKey]; })
+      : [li];
     todoDrag = {
       pointerId: e.pointerId,
       li: li,
       listEl: listEl,
+      startY: e.clientY,
+      moved: false,
+      movingSelectedGroup: movingSelectedGroup,
+      groupRows: groupRows,
       order: rows.map(function (row) { return Number(row.dataset.idx); }) // current display order, by original todoItems index
     };
-    li.classList.add("dragging");
     // Listening on document (rather than capturing the pointer to the
     // dragged row itself) is deliberate: this row gets repositioned in
     // the DOM on every move as it's dragged past others, and moving the
@@ -685,6 +729,12 @@
   }
   function onTodoDragMove(e) {
     if (!todoDrag || e.pointerId !== todoDrag.pointerId) return;
+    if (!todoDrag.moved) {
+      if (Math.abs(e.clientY - todoDrag.startY) < 5) return;
+      todoDrag.moved = true;
+      if (!todoDrag.movingSelectedGroup) clearTodoSelection(todoDrag.listEl);
+      todoDrag.groupRows.forEach(function (row) { row.classList.add("dragging"); });
+    }
     // Find where the pointer currently is relative to every OTHER row's
     // midpoint, and insert directly there — not one row at a time from
     // wherever the dragged item happened to be a moment ago. Stepping
@@ -692,16 +742,16 @@
     // finger, since it only ever advanced past the nearest crossed row
     // before stopping to wait for the next move event.
     var others = Array.prototype.slice.call(todoDrag.listEl.querySelectorAll(".personal-todo"))
-      .filter(function (row) { return row !== todoDrag.li; });
+      .filter(function (row) { return todoDrag.groupRows.indexOf(row) === -1; });
     var insertBeforeEl = null;
     for (var i = 0; i < others.length; i++) {
       var rect = others[i].getBoundingClientRect();
       if (e.clientY < rect.top + rect.height / 2) { insertBeforeEl = others[i]; break; }
     }
     if (insertBeforeEl) {
-      if (insertBeforeEl !== todoDrag.li.nextSibling) todoDrag.listEl.insertBefore(todoDrag.li, insertBeforeEl);
-    } else if (todoDrag.li !== todoDrag.listEl.lastElementChild) {
-      todoDrag.listEl.appendChild(todoDrag.li);
+      todoDrag.groupRows.forEach(function (row) { todoDrag.listEl.insertBefore(row, insertBeforeEl); });
+    } else {
+      todoDrag.groupRows.forEach(function (row) { todoDrag.listEl.appendChild(row); });
     }
   }
   function endTodoDrag(e) {
@@ -710,11 +760,18 @@
     document.removeEventListener("pointermove", onTodoDragMove);
     document.removeEventListener("pointerup", endTodoDrag);
     document.removeEventListener("pointercancel", endTodoDrag);
-    li.classList.remove("dragging");
+    todoDrag.groupRows.forEach(function (row) { row.classList.remove("dragging"); });
+
+    if (!todoDrag.moved) {
+      toggleTodoSelection(li);
+      todoDrag = null;
+      return;
+    }
 
     var newOrderIndexes = Array.prototype.slice.call(listEl.querySelectorAll(".personal-todo"))
       .map(function (row) { return Number(row.dataset.idx); });
     todoDrag = null;
+    clearTodoSelection(listEl);
     var reordered = newOrderIndexes.map(function (originalIdx) { return todoItems[originalIdx]; });
     var changed = reordered.some(function (item, i) { return item !== todoItems[i]; });
     if (changed) doReorderTodos(reordered);
