@@ -1,0 +1,1603 @@
+(function () {
+  "use strict";
+
+  var currentUser = null;
+  var currentProfile = null;
+  var todayStr = localDateStr(new Date());
+  var viewedDate = todayStr;
+  var docCache = {}; // dateStr -> {sessions, notes, completedTodos}
+  var unsubViewed = null;
+  var unsubHistory = null;
+  var unsubArchives = null;
+  var unsubTodos = null;
+  var todoItems = []; // the running, not-date-scoped to-do list
+  var unsubAssignedTasks = null;
+  var assignedTasks = []; // manager-assigned items shown on this personal list
+  var unsubMileage = null;
+  var mileageTrips = []; // pending, not-yet-exported mileage trips
+  var editingTripIndex = null;
+  var approverUsers = [];
+  var myWeeklyApprovals = {};
+  var assignedWeeklyApprovals = [];
+  var selectedApprovalWeekStart = mondayForWorkDate(todayStr);
+  var selectedWeekSnapshot = [];
+  var unsubApproverUsers = null;
+  var unsubMyApprovals = null;
+  var unsubAssignedApprovals = null;
+  var weekLoadToken = 0;
+
+  function entryRef(dateStr) {
+    return db.collection("entries").doc(entryId(currentUser.uid, dateStr));
+  }
+
+  function getDayData(dateStr) {
+    return docCache[dateStr] || emptyDay();
+  }
+
+  function auditCol() { return db.collection("auditLogs"); }
+  function writeAudit(action, dateStr, detail, extra) {
+    var record = {
+      actorUid: currentUser.uid,
+      actorName: currentProfile.name || currentProfile.email || "Employee",
+      targetUid: currentUser.uid,
+      targetName: currentProfile.name || currentProfile.email || "Employee",
+      date: dateStr || "",
+      action: action,
+      detail: detail || "",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdAtIso: new Date().toISOString()
+    };
+    Object.keys(extra || {}).forEach(function (key) { record[key] = extra[key]; });
+    return auditCol().add(record).catch(function (err) { console.error("audit write error", err); });
+  }
+
+  function saveDay(dateStr, data, auditAction, auditDetail) {
+    return entryRef(dateStr).set({
+      uid: currentUser.uid,
+      name: currentProfile.name,
+      date: dateStr,
+      sessions: data.sessions,
+      notes: data.notes,
+      completedTodos: data.completedTodos || []
+    }).then(function () {
+      if (auditAction) return writeAudit(auditAction, dateStr, auditDetail);
+    });
+  }
+
+  // ---------- Monday-Sunday work-week approvals ----------
+  function weeklyApprovalId(uid, weekStart) { return uid + "_" + weekStart; }
+  function weeklyApprovalRef(weekStart) {
+    return db.collection("weeklyApprovals").doc(weeklyApprovalId(currentUser.uid, weekStart));
+  }
+
+  function loadWeekSnapshot(weekStart) {
+    return Promise.all(datesForWorkWeek(weekStart).map(function (dateStr) {
+      return entryRef(dateStr).get().then(function (snap) {
+        if (snap.exists) return snap.data();
+        return db.collection("archives").doc(entryId(currentUser.uid, dateStr)).get().then(function (archiveSnap) {
+          return archiveSnap.exists ? archiveSnap.data() : emptyDay();
+        });
+      }).then(function (data) {
+        var day = {
+          date: dateStr,
+          sessions: clone(data.sessions || []),
+          notes: clone(data.notes || []),
+          completedTodos: clone(data.completedTodos || [])
+        };
+        day.totalMinutes = totalMinutesFor(day);
+        return day;
+      });
+    }));
+  }
+
+  function populateApproverSelect() {
+    var select = document.getElementById("weekApproverSelect");
+    if (!select || !currentUser) return;
+    var previous = select.value;
+    select.innerHTML = '<option value="">Select an approver</option>';
+    approverUsers.filter(function (user) { return user.id !== currentUser.uid; }).forEach(function (user) {
+      var option = document.createElement("option");
+      option.value = user.id;
+      option.textContent = user.name || user.email || "Employee";
+      select.appendChild(option);
+    });
+    var preferred = previous || currentProfile.lastApproverUid || "";
+    if (preferred && approverUsers.some(function (user) { return user.id === preferred && user.id !== currentUser.uid; })) {
+      select.value = preferred;
+    }
+  }
+
+  function subscribeApproverDirectory() {
+    unsubApproverUsers = db.collection("users").onSnapshot(function (snap) {
+      approverUsers = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      approverUsers.sort(function (a, b) { return String(a.name || a.email || "").localeCompare(String(b.name || b.email || "")); });
+      populateApproverSelect();
+    }, function (err) {
+      console.error("approver directory error", err);
+      document.getElementById("weekApproverSelect").innerHTML = '<option value="">Approver list could not load</option>';
+    });
+  }
+
+  function subscribeMyWeeklyApprovals() {
+    unsubMyApprovals = db.collection("weeklyApprovals").where("employeeUid", "==", currentUser.uid).onSnapshot(function (snap) {
+      myWeeklyApprovals = {};
+      snap.docs.forEach(function (doc) {
+        var approval = Object.assign({ id: doc.id }, doc.data());
+        myWeeklyApprovals[approval.weekStart] = approval;
+      });
+      renderSelectedWorkWeek();
+    }, function (err) { console.error("my approvals error", err); });
+  }
+
+  function subscribeAssignedWeeklyApprovals() {
+    unsubAssignedApprovals = db.collection("weeklyApprovals").where("approverUid", "==", currentUser.uid).onSnapshot(function (snap) {
+      assignedWeeklyApprovals = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      renderAssignedApprovals();
+    }, function (err) {
+      console.error("assigned approvals error", err);
+      document.getElementById("assignedApprovalsList").innerHTML = '<div class="log-empty">Approvals could not load.</div>';
+    });
+  }
+
+  function approvalStatusText(approval) {
+    if (!approval) return "Not submitted";
+    if (approval.status === "pending") return "Waiting for " + (approval.approverName || "approver");
+    if (approval.status === "approved") {
+      return "Approved by " + (approval.approvedByName || approval.approverName || "approver") +
+        (approval.approvedAt || approval.approvedAtIso ? " · " + fmtDateTimeCentral(approval.approvedAt || approval.approvedAtIso) : "");
+    }
+    if (approval.status === "returned") return "Returned for correction: " + (approval.returnComment || "Please review this week.");
+    return approval.status || "Not submitted";
+  }
+
+  function renderSelectedWorkWeek() {
+    if (!currentUser) return;
+    var token = ++weekLoadToken;
+    var approval = myWeeklyApprovals[selectedApprovalWeekStart];
+    var status = document.getElementById("employeeApprovalStatus");
+    var submitBtn = document.getElementById("submitWeekBtn");
+    document.getElementById("approvalWeekPicker").value = selectedApprovalWeekStart;
+    document.getElementById("employeeWeekLabel").textContent = workWeekLabel(selectedApprovalWeekStart);
+    status.className = "approval-status" + (approval ? " " + approval.status : "");
+    status.textContent = approvalStatusText(approval);
+    submitBtn.disabled = !!approval && (approval.status === "pending" || approval.status === "approved");
+    submitBtn.textContent = approval && approval.status === "returned" ? "Resubmit Work Week" : "Submit Work Week";
+    document.getElementById("employeeWeekLogs").innerHTML = '<div class="log-empty">Loading work week…</div>';
+
+    loadWeekSnapshot(selectedApprovalWeekStart).then(function (snapshot) {
+      if (token !== weekLoadToken) return;
+      selectedWeekSnapshot = snapshot;
+      document.getElementById("employeeWeekTotal").textContent = fmtDuration(weeklySnapshotTotal(snapshot));
+      var list = document.getElementById("employeeWeekLogs");
+      list.innerHTML = "";
+      list.appendChild(buildWeeklyApprovalLog(snapshot));
+    }).catch(function (err) {
+      console.error("work week load error", err);
+      document.getElementById("employeeWeekLogs").innerHTML = '<div class="log-empty">This work week could not load.</div>';
+    });
+  }
+
+  function submitSelectedWorkWeek() {
+    var existing = myWeeklyApprovals[selectedApprovalWeekStart];
+    if (existing && (existing.status === "pending" || existing.status === "approved")) return;
+    var approverUid = document.getElementById("weekApproverSelect").value;
+    var approver = approverUsers.find(function (user) { return user.id === approverUid; });
+    if (!approver) { alert("Select the person who should approve this work week."); return; }
+    if (approverUid === currentUser.uid) { alert("Choose someone other than yourself to approve the week."); return; }
+    var button = document.getElementById("submitWeekBtn");
+    button.disabled = true;
+    button.textContent = "Submitting…";
+
+    loadWeekSnapshot(selectedApprovalWeekStart).then(function (snapshot) {
+      if (!weeklySnapshotHasWork(snapshot)) throw new Error("EMPTY_WEEK");
+      if (weeklySnapshotHasOpenPunch(snapshot)) throw new Error("OPEN_PUNCH");
+      var id = weeklyApprovalId(currentUser.uid, selectedApprovalWeekStart);
+      var nowIso = new Date().toISOString();
+      var record = {
+        employeeUid: currentUser.uid,
+        employeeName: currentProfile.name || currentProfile.email || "Employee",
+        approverUid: approver.id,
+        approverName: approver.name || approver.email || "Approver",
+        weekStart: selectedApprovalWeekStart,
+        weekEnd: sundayForWorkWeek(selectedApprovalWeekStart),
+        status: "pending",
+        snapshot: snapshot,
+        totalMinutes: weeklySnapshotTotal(snapshot),
+        submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        submittedAtIso: nowIso,
+        approvedAt: null,
+        approvedAtIso: "",
+        approvedByUid: "",
+        approvedByName: "",
+        returnedAt: null,
+        returnedAtIso: "",
+        returnedByUid: "",
+        returnedByName: "",
+        returnComment: "",
+        lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      };
+      return weeklyApprovalRef(selectedApprovalWeekStart).set(record).then(function () {
+        currentProfile.lastApproverUid = approver.id;
+        return userDocRef(currentUser.uid).update({ lastApproverUid: approver.id });
+      }).then(function () {
+        return writeAudit(
+          "week_submitted",
+          selectedApprovalWeekStart,
+          "Submitted " + workWeekLabel(selectedApprovalWeekStart) + " to " + record.approverName + " for approval.",
+          { approvalId: id }
+        );
+      });
+    }).catch(function (err) {
+      if (err && err.message === "EMPTY_WEEK") alert("There is no logged work in this week to submit.");
+      else if (err && err.message === "OPEN_PUNCH") alert("Clock out of every open shift before submitting this week.");
+      else { console.error("submit work week error", err); alert("The work week could not be submitted. Please try again."); }
+      button.disabled = false;
+      button.textContent = existing && existing.status === "returned" ? "Resubmit Work Week" : "Submit Work Week";
+    });
+  }
+
+  function writeApprovalDecisionAudit(action, approval, detail) {
+    return auditCol().add({
+      actorUid: currentUser.uid,
+      actorName: currentProfile.name || currentProfile.email || "Approver",
+      targetUid: approval.employeeUid,
+      targetName: approval.employeeName || "Employee",
+      date: approval.weekStart,
+      action: action,
+      detail: detail,
+      approvalId: approval.id,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdAtIso: new Date().toISOString()
+    }).catch(function (err) { console.error("approval audit error", err); });
+  }
+
+  function decideApproval(approval, approve) {
+    if (!approval || approval.status !== "pending") return;
+    var comment = "";
+    if (!approve) {
+      comment = window.prompt("What does " + approval.employeeName + " need to correct?");
+      if (comment === null) return;
+      comment = comment.trim();
+      if (!comment) { alert("Enter a correction note before returning the week."); return; }
+    } else if (!window.confirm("Approve " + approval.employeeName + "'s work week for " + workWeekLabel(approval.weekStart) + "?")) {
+      return;
+    }
+    var nowIso = new Date().toISOString();
+    var update = approve ? {
+      status: "approved",
+      approvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      approvedAtIso: nowIso,
+      approvedByUid: currentUser.uid,
+      approvedByName: currentProfile.name || currentProfile.email || "Approver",
+      lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    } : {
+      status: "returned",
+      returnedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      returnedAtIso: nowIso,
+      returnedByUid: currentUser.uid,
+      returnedByName: currentProfile.name || currentProfile.email || "Approver",
+      returnComment: comment,
+      lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    db.collection("weeklyApprovals").doc(approval.id).update(update).then(function () {
+      var action = approve ? "week_approved" : "week_returned";
+      var detail = approve
+        ? "Approved " + workWeekLabel(approval.weekStart) + "."
+        : "Returned " + workWeekLabel(approval.weekStart) + " for correction: " + comment;
+      return writeApprovalDecisionAudit(action, approval, detail);
+    }).catch(function (err) {
+      console.error("approval decision error", err);
+      alert("The approval decision could not be saved. Please try again.");
+    });
+  }
+
+  function renderAssignedApprovals() {
+    var pending = assignedWeeklyApprovals.filter(function (approval) { return approval.status === "pending"; });
+    pending.sort(function (a, b) { return String(b.weekStart).localeCompare(String(a.weekStart)); });
+    var tabButton = document.getElementById("tabApprovalsBtn");
+    var count = document.getElementById("approvalCount");
+    count.textContent = pending.length;
+    tabButton.style.display = pending.length ? "inline-block" : "none";
+    var list = document.getElementById("assignedApprovalsList");
+    list.innerHTML = "";
+    if (!pending.length) {
+      list.innerHTML = '<div class="log-empty">No work weeks are waiting for your approval.</div>';
+      if (document.getElementById("approvalsTab").style.display !== "none") switchAppTab("weekly");
+      return;
+    }
+    pending.forEach(function (approval) {
+      var card = document.createElement("div");
+      card.className = "approval-card";
+      var top = document.createElement("div");
+      top.className = "approval-card-top";
+      var identity = document.createElement("div");
+      var title = document.createElement("div");
+      title.className = "approval-card-title";
+      title.textContent = approval.employeeName || "Employee";
+      var meta = document.createElement("div");
+      meta.className = "approval-card-meta";
+      meta.textContent = workWeekLabel(approval.weekStart) + (approval.submittedAt || approval.submittedAtIso ? " · Submitted " + fmtDateTimeCentral(approval.submittedAt || approval.submittedAtIso) : "");
+      identity.appendChild(title);
+      identity.appendChild(meta);
+      var total = document.createElement("div");
+      total.className = "approval-card-total";
+      total.textContent = fmtDuration(approval.totalMinutes || weeklySnapshotTotal(approval.snapshot));
+      top.appendChild(identity);
+      top.appendChild(total);
+      card.appendChild(top);
+
+      var details = document.createElement("details");
+      var summary = document.createElement("summary");
+      summary.textContent = "View Work Logs";
+      details.appendChild(summary);
+      details.appendChild(buildWeeklyApprovalLog(approval.snapshot || []));
+      card.appendChild(details);
+
+      var actions = document.createElement("div");
+      actions.className = "approval-actions";
+      var approveBtn = document.createElement("button");
+      approveBtn.className = "btn";
+      approveBtn.textContent = "Approve Work Week";
+      approveBtn.onclick = function () { decideApproval(approval, true); };
+      var returnBtn = document.createElement("button");
+      returnBtn.className = "btn secondary";
+      returnBtn.textContent = "Return for Correction";
+      returnBtn.onclick = function () { decideApproval(approval, false); };
+      actions.appendChild(approveBtn);
+      actions.appendChild(returnBtn);
+      card.appendChild(actions);
+      list.appendChild(card);
+    });
+  }
+
+  // ---------- to-do list (separate doc, not tied to a date) ----------
+  function todosRef() {
+    return db.collection("todos").doc(currentUser.uid);
+  }
+  function subscribeTodos() {
+    unsubTodos = todosRef().onSnapshot(function (snap) {
+      todoItems = (snap.exists && snap.data().items) || [];
+      renderTodos();
+    }, function (err) { console.error("todos snapshot error", err); });
+  }
+  function saveTodos(items) {
+    return todosRef().set({ items: items });
+  }
+  function subscribeAssignedTasks() {
+    unsubAssignedTasks = db.collection("assignedTasks").where("employeeUid", "==", currentUser.uid)
+      .onSnapshot(function (snap) {
+        assignedTasks = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+        assignedTasks.sort(function (a, b) {
+          return String(a.createdAtIso || "").localeCompare(String(b.createdAtIso || ""));
+        });
+        renderTodos();
+      }, function (err) { console.error("assigned tasks snapshot error", err); });
+  }
+  function doAddTodo(text) {
+    text = text.trim();
+    if (!text) return;
+    var items = clone(todoItems);
+    items.push({ text: text, createdAt: new Date().toISOString() });
+    saveTodos(items);
+  }
+  function doDeleteTodo(idx) {
+    var items = clone(todoItems);
+    items.splice(idx, 1);
+    saveTodos(items);
+  }
+  function doEditTodo(idx, newText) {
+    newText = newText.trim();
+    if (!newText) return;
+    var items = clone(todoItems);
+    var item = items[idx];
+    if (!item) return;
+    item.text = newText;
+    saveTodos(items);
+  }
+  var TODO_PRIORITY_ORDER = ["", "low", "medium", "high"];
+  var TODO_PRIORITY_META = {
+    "": { label: "No priority", short: "" },
+    low: { label: "Low priority", short: "Low" },
+    medium: { label: "Medium priority", short: "Med" },
+    high: { label: "High priority", short: "High" }
+  };
+  function doCyclePriority(idx) {
+    var items = clone(todoItems);
+    var item = items[idx];
+    if (!item) return;
+    var current = TODO_PRIORITY_ORDER.indexOf(item.priority || "");
+    item.priority = TODO_PRIORITY_ORDER[(current + 1) % TODO_PRIORITY_ORDER.length];
+    saveTodos(items);
+  }
+  // Persists a full reorder of the personal list. `orderedItems` is the
+  // complete items array in its new order (built during the drag, in
+  // renderTodos below) — saved once, when the drag ends, not on every
+  // pointer move.
+  function doReorderTodos(orderedItems) {
+    saveTodos(orderedItems);
+  }
+  function doCompleteTodo(idx) {
+    var items = clone(todoItems);
+    var item = items[idx];
+    if (!item) return;
+    items.splice(idx, 1);
+    saveTodos(items);
+
+    // Log the completion, timestamped, into today's log.
+    var data = clone(getDayData(todayStr));
+    data.completedTodos = data.completedTodos || [];
+    data.completedTodos.push({ text: item.text, completedAt: new Date().toISOString() });
+    saveDay(todayStr, data, "completed_task_added", "Completed task: " + item.text);
+  }
+  function doCompleteAssignedTask(task) {
+    if (!task || task.status !== "assigned") return;
+    var ref = db.collection("assignedTasks").doc(task.id);
+    var completedAtIso = new Date().toISOString();
+    db.runTransaction(function (tx) {
+      return tx.get(ref).then(function (snap) {
+        if (!snap.exists || snap.data().status !== "assigned") throw new Error("This task is no longer awaiting completion.");
+        tx.update(ref, {
+          status: "completed",
+          completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          completedAtIso: completedAtIso,
+          completedByUid: currentUser.uid,
+          completedByName: currentProfile.name || currentProfile.email || "Employee",
+          lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+    }).then(function () {
+      var data = clone(getDayData(todayStr));
+      data.completedTodos = data.completedTodos || [];
+      data.completedTodos.push({
+        text: task.text,
+        completedAt: completedAtIso,
+        assignedTaskId: task.id,
+        assignedByName: task.assignedByName || "Manager"
+      });
+      saveDay(todayStr, data, "assigned_task_completed", "Completed manager-assigned task: " + task.text)
+        .catch(function (err) { console.error("assigned task work-log error", err); });
+    }).catch(function (err) {
+      console.error("assigned task completion error", err);
+      alert(err.message || "The assigned task could not be completed. Please try again.");
+    });
+  }
+  function doDeleteCompletedTodo(dateStr, idx) {
+    var data = clone(getDayData(dateStr));
+    var removed = (data.completedTodos || []).splice(idx, 1)[0];
+    saveDay(dateStr, data, "completed_task_deleted", "Deleted completed task: " + ((removed && removed.text) || "(blank task)"));
+  }
+  function doEditCompletedTodo(dateStr, idx, newText, timeVal) {
+    var data = clone(getDayData(dateStr));
+    var ct = (data.completedTodos || [])[idx];
+    if (!ct) return;
+    newText = newText.trim();
+    if (newText) ct.text = newText;
+    if (timeVal) ct.completedAt = fromTimeInputValue(dateStr, timeVal);
+    saveDay(dateStr, data, "completed_task_edited", "Edited a completed task at " + (timeVal || timeInputValue(ct.completedAt)) + " CT.");
+  }
+  // Undoes an accidental "complete" — removes it from the day's log
+  // and, for a personal task, puts it back on the pending to-do list.
+  // A manager-assigned task instead goes back to "assigned" in the
+  // assignedTasks collection (it never lived on the personal list),
+  // and only while it's still awaiting approval — once a manager has
+  // approved it, this is no longer an available action.
+  function doRestoreCompletedTodo(dateStr, idx) {
+    var data = clone(getDayData(dateStr));
+    var removed = (data.completedTodos || [])[idx];
+    if (!removed) return;
+
+    function removeLogEntryAndSave() {
+      var freshData = clone(getDayData(dateStr));
+      freshData.completedTodos.splice(idx, 1);
+      saveDay(dateStr, freshData, "completed_task_restored", "Restored a completed task to the to-do list: " + (removed.text || "(blank task)"));
+    }
+
+    if (removed.assignedTaskId) {
+      var ref = db.collection("assignedTasks").doc(removed.assignedTaskId);
+      db.runTransaction(function (tx) {
+        return tx.get(ref).then(function (snap) {
+          if (!snap.exists || snap.data().status !== "completed") {
+            throw new Error("This task can no longer be restored \u2014 it may already be approved.");
+          }
+          tx.update(ref, {
+            status: "assigned",
+            completedAt: firebase.firestore.FieldValue.delete(),
+            completedAtIso: firebase.firestore.FieldValue.delete(),
+            completedByUid: firebase.firestore.FieldValue.delete(),
+            completedByName: firebase.firestore.FieldValue.delete(),
+            lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        });
+      }).then(removeLogEntryAndSave).catch(function (err) {
+        console.error("restore assigned task error", err);
+        alert(err.message || "This assigned task could not be restored. Please try again.");
+      });
+    } else {
+      var items = clone(todoItems);
+      items.push({ text: removed.text, createdAt: new Date().toISOString() });
+      saveTodos(items);
+      removeLogEntryAndSave();
+    }
+  }
+
+  function renderTodos() {
+    var listEl = document.getElementById("todoList");
+    listEl.innerHTML = "";
+    var visibleAssigned = assignedTasks.filter(function (task) { return task.status === "assigned" || task.status === "completed"; });
+    if (todoItems.length === 0 && visibleAssigned.length === 0) {
+      listEl.innerHTML = '<li class="log-empty">Nothing on your list.</li>';
+      return;
+    }
+    if (visibleAssigned.length) {
+      var assignedHeading = document.createElement("li");
+      assignedHeading.className = "todo-section-label";
+      assignedHeading.textContent = "Assigned by manager";
+      listEl.appendChild(assignedHeading);
+      visibleAssigned.forEach(function (task) {
+        var li = document.createElement("li");
+        li.className = "todo-row assigned-todo" + (task.status === "completed" ? " awaiting-approval" : "");
+        var checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = task.status === "completed";
+        checkbox.disabled = task.status === "completed";
+        checkbox.onchange = function () { doCompleteAssignedTask(task); };
+        var copy = document.createElement("div");
+        copy.className = "todo-assigned-copy";
+        var text = document.createElement("span");
+        text.className = "todo-text";
+        text.textContent = task.text || "Assigned task";
+        var meta = document.createElement("span");
+        meta.className = "todo-assigned-meta";
+        meta.textContent = "Assigned by " + (task.assignedByName || "Manager");
+        copy.appendChild(text);
+        copy.appendChild(meta);
+        var badge = document.createElement("span");
+        badge.className = "assigned-task-badge " + task.status;
+        badge.textContent = task.status === "completed" ? "Waiting for approval" : "Assigned";
+        li.appendChild(checkbox);
+        li.appendChild(copy);
+        li.appendChild(badge);
+        listEl.appendChild(li);
+      });
+    }
+    if (todoItems.length) {
+      var personalHeading = document.createElement("li");
+      personalHeading.className = "todo-section-label";
+      personalHeading.textContent = "My personal tasks";
+      listEl.appendChild(personalHeading);
+    }
+    var personalListEl = document.createElement("ul");
+    personalListEl.className = "todo-personal-list";
+    personalListEl.style.listStyle = "none";
+    personalListEl.style.margin = "0";
+    personalListEl.style.padding = "0";
+    todoItems.forEach(function (item, idx) {
+      var li = document.createElement("li");
+      li.className = "todo-row personal-todo";
+      li.dataset.idx = String(idx);
+
+      var dragHandle = document.createElement("button");
+      dragHandle.type = "button";
+      dragHandle.className = "todo-drag-handle";
+      dragHandle.title = "Drag to reorder";
+      dragHandle.setAttribute("aria-label", "Drag to reorder");
+      dragHandle.textContent = "\u2261";
+      dragHandle.onpointerdown = function (e) { startTodoDrag(e, li, personalListEl); };
+
+      var priorityBtn = document.createElement("button");
+      priorityBtn.type = "button";
+      var priorityKey = item.priority || "";
+      priorityBtn.className = "todo-priority-flag priority-" + (priorityKey || "none");
+      priorityBtn.title = TODO_PRIORITY_META[priorityKey].label + " \u2014 tap to change";
+      priorityBtn.textContent = TODO_PRIORITY_META[priorityKey].short || "\u2691";
+      priorityBtn.onclick = function () { doCyclePriority(idx); };
+
+      var checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = false;
+      checkbox.onchange = function () { doCompleteTodo(idx); };
+
+      var textSpan = document.createElement("span");
+      textSpan.className = "todo-text";
+      textSpan.textContent = item.text;
+
+      var editLink = document.createElement("button");
+      editLink.className = "edit-link";
+      editLink.textContent = "edit";
+      editLink.onclick = function () {
+        var input = document.createElement("input");
+        input.type = "text";
+        input.value = item.text;
+        input.style.flex = "1";
+        input.style.minWidth = "140px";
+        input.style.fontFamily = "'Source Sans 3', sans-serif";
+        input.style.fontSize = "16px";
+        input.style.padding = "3px 6px";
+        input.style.border = "1px solid var(--line)";
+        input.style.borderRadius = "4px";
+        input.style.background = "var(--paper)";
+        input.style.color = "var(--ink)";
+        var saveBtn = document.createElement("button");
+        saveBtn.textContent = "Save";
+        var box = document.createElement("div");
+        saveBtn.onclick = function () {
+          doEditTodo(idx, input.value);
+          textSpan.textContent = input.value.trim() || item.text;
+          li.replaceChild(textSpan, box);
+          editLink.disabled = false;
+        };
+        input.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") saveBtn.click();
+        });
+        box.className = "edit-inline";
+        box.style.flex = "1";
+        box.appendChild(input);
+        box.appendChild(saveBtn);
+        li.replaceChild(box, textSpan);
+        editLink.disabled = true;
+      };
+
+      var del = document.createElement("button");
+      del.className = "del";
+      del.title = "Remove without completing";
+      del.textContent = "\u2715";
+      del.onclick = function () { doDeleteTodo(idx); };
+
+      li.appendChild(dragHandle);
+      li.appendChild(priorityBtn);
+      li.appendChild(checkbox);
+      li.appendChild(textSpan);
+      li.appendChild(editLink);
+      li.appendChild(del);
+      personalListEl.appendChild(li);
+    });
+    if (todoItems.length) listEl.appendChild(personalListEl);
+  }
+
+  // ---------- drag-to-reorder for personal to-dos ----------
+  // Uses Pointer Events (not the old HTML5 drag-and-drop API, which is
+  // mouse-only and doesn't work on a touchscreen — this list is used on
+  // phones every day). One pointer stream handles mouse, touch, and pen
+  // alike. Reordering happens live for visual feedback; the new order is
+  // only saved once, on release.
+  var todoDrag = null;
+  function startTodoDrag(e, li, listEl) {
+    e.preventDefault();
+    var rows = Array.prototype.slice.call(listEl.querySelectorAll(".personal-todo"));
+    todoDrag = {
+      pointerId: e.pointerId,
+      li: li,
+      listEl: listEl,
+      order: rows.map(function (row) { return Number(row.dataset.idx); }) // current display order, by original todoItems index
+    };
+    li.classList.add("dragging");
+    // Listening on document (rather than capturing the pointer to the
+    // dragged row itself) is deliberate: this row gets repositioned in
+    // the DOM on every move as it's dragged past others, and moving the
+    // element currently holding pointer capture silently drops that
+    // capture on some browsers — the drag would die after one step,
+    // needing a fresh press to advance one more space. document never
+    // moves, so listening there keeps receiving events for the whole
+    // gesture no matter how many times the row gets reparented.
+    document.addEventListener("pointermove", onTodoDragMove);
+    document.addEventListener("pointerup", endTodoDrag);
+    document.addEventListener("pointercancel", endTodoDrag);
+  }
+  function onTodoDragMove(e) {
+    if (!todoDrag || e.pointerId !== todoDrag.pointerId) return;
+    // Find where the pointer currently is relative to every OTHER row's
+    // midpoint, and insert directly there — not one row at a time from
+    // wherever the dragged item happened to be a moment ago. Stepping
+    // one row per event meant a fast or long drag lagged behind the
+    // finger, since it only ever advanced past the nearest crossed row
+    // before stopping to wait for the next move event.
+    var others = Array.prototype.slice.call(todoDrag.listEl.querySelectorAll(".personal-todo"))
+      .filter(function (row) { return row !== todoDrag.li; });
+    var insertBeforeEl = null;
+    for (var i = 0; i < others.length; i++) {
+      var rect = others[i].getBoundingClientRect();
+      if (e.clientY < rect.top + rect.height / 2) { insertBeforeEl = others[i]; break; }
+    }
+    if (insertBeforeEl) {
+      if (insertBeforeEl !== todoDrag.li.nextSibling) todoDrag.listEl.insertBefore(todoDrag.li, insertBeforeEl);
+    } else if (todoDrag.li !== todoDrag.listEl.lastElementChild) {
+      todoDrag.listEl.appendChild(todoDrag.li);
+    }
+  }
+  function endTodoDrag(e) {
+    if (!todoDrag || e.pointerId !== todoDrag.pointerId) return;
+    var li = todoDrag.li, listEl = todoDrag.listEl;
+    document.removeEventListener("pointermove", onTodoDragMove);
+    document.removeEventListener("pointerup", endTodoDrag);
+    document.removeEventListener("pointercancel", endTodoDrag);
+    li.classList.remove("dragging");
+
+    var newOrderIndexes = Array.prototype.slice.call(listEl.querySelectorAll(".personal-todo"))
+      .map(function (row) { return Number(row.dataset.idx); });
+    todoDrag = null;
+    var reordered = newOrderIndexes.map(function (originalIdx) { return todoItems[originalIdx]; });
+    var changed = reordered.some(function (item, i) { return item !== todoItems[i]; });
+    if (changed) doReorderTodos(reordered);
+  }
+
+  // ---------- mileage log (separate doc, not tied to a date) ----------
+  function mileageRef() {
+    return db.collection("mileage").doc(currentUser.uid);
+  }
+  function subscribeMileage() {
+    unsubMileage = mileageRef().onSnapshot(function (snap) {
+      mileageTrips = (snap.exists && snap.data().trips) || [];
+      renderMileage();
+    }, function (err) { console.error("mileage snapshot error", err); });
+  }
+  function saveMileageTrips(trips) {
+    return mileageRef().set({ trips: trips });
+  }
+
+  function tripIsComplete(t) {
+    return t && t.endOdometer !== "" && t.endOdometer !== null && typeof t.endOdometer !== "undefined";
+  }
+
+  function tripMiles(t) {
+    if (!tripIsComplete(t)) return 0;
+    return Math.max(0, (Number(t.endOdometer) || 0) - (Number(t.beginOdometer) || 0));
+  }
+  function tripAmount(t) {
+    return tripMiles(t) * 0.73;
+  }
+
+  function saveEmployeeInfo(field, value) {
+    var update = {};
+    update[field] = value;
+    db.collection("users").doc(currentUser.uid).update(update).then(function () {
+      currentProfile[field] = value; // keep the in-memory copy in sync
+    }).catch(function (err) { console.error("save employee info error", err); });
+  }
+
+  function resetTripForm() {
+    document.getElementById("tripBeginDate").value = todayStr;
+    document.getElementById("tripEndDate").value = "";
+    document.getElementById("tripDescription").value = "";
+    document.getElementById("tripBeginOdo").value = "";
+    document.getElementById("tripEndOdo").value = "";
+    editingTripIndex = null;
+    document.getElementById("tripAddBtn").textContent = "Save Mileage";
+  }
+
+  function doAddOrUpdateTrip() {
+    var trip = {
+      beginDate: document.getElementById("tripBeginDate").value,
+      endDate: document.getElementById("tripEndDate").value,
+      description: document.getElementById("tripDescription").value.trim(),
+      beginOdometer: document.getElementById("tripBeginOdo").value,
+      endOdometer: document.getElementById("tripEndOdo").value
+    };
+    if (!trip.beginDate || !trip.description || trip.beginOdometer === "") {
+      alert("Enter the start date, location, and starting mileage before saving.");
+      return;
+    }
+    if (!Number.isFinite(Number(trip.beginOdometer)) || Number(trip.beginOdometer) < 0) {
+      alert("Enter a valid starting mileage.");
+      return;
+    }
+    // A same-day trip does not need a separate ending date. Most importantly,
+    // ending mileage can stay blank until the employee finishes the day.
+    trip.endDate = trip.endDate || trip.beginDate;
+    if (tripIsComplete(trip) && (!Number.isFinite(Number(trip.endOdometer)) || Number(trip.endOdometer) < Number(trip.beginOdometer))) {
+      alert("Ending odometer should be greater than or equal to the beginning odometer.");
+      return;
+    }
+    var trips = clone(mileageTrips);
+    if (editingTripIndex !== null) {
+      trips[editingTripIndex] = trip;
+    } else {
+      if (trips.length >= MILEAGE_MAX_ROWS) {
+        alert("This form only holds " + MILEAGE_MAX_ROWS + " trips. Export and clear the list before adding more.");
+        return;
+      }
+      trips.push(trip);
+    }
+    saveMileageTrips(trips);
+    resetTripForm();
+  }
+
+  function doEditTripStart(idx) {
+    var t = mileageTrips[idx];
+    if (!t) return;
+    document.getElementById("tripBeginDate").value = t.beginDate;
+    document.getElementById("tripEndDate").value = t.endDate || t.beginDate || "";
+    document.getElementById("tripDescription").value = t.description;
+    document.getElementById("tripBeginOdo").value = t.beginOdometer;
+    document.getElementById("tripEndOdo").value = tripIsComplete(t) ? t.endOdometer : "";
+    editingTripIndex = idx;
+    document.getElementById("tripAddBtn").textContent = tripIsComplete(t) ? "Save Changes" : "Finish & Save";
+    if (!tripIsComplete(t)) document.getElementById("tripEndOdo").focus();
+    document.getElementById("tripBeginDate").scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function doDeleteTrip(idx) {
+    var trips = clone(mileageTrips);
+    trips.splice(idx, 1);
+    saveMileageTrips(trips);
+    if (editingTripIndex === idx) resetTripForm();
+  }
+
+  function doClearMileage() {
+    if (mileageTrips.length === 0) return;
+    var completedCount = mileageTrips.filter(tripIsComplete).length;
+    if (completedCount === 0) {
+      alert("There are no completed trips to clear. Your in-progress trip is still saved.");
+      return;
+    }
+    if (!confirm("Clear " + completedCount + " completed trip(s)? Any in-progress trip will stay saved.")) return;
+    saveMileageTrips(mileageTrips.filter(function (t) { return !tripIsComplete(t); }));
+    resetTripForm();
+  }
+
+  function doExportMileage() {
+    var completedTrips = mileageTrips.filter(tripIsComplete);
+    var inProgressCount = mileageTrips.length - completedTrips.length;
+    if (completedTrips.length === 0) {
+      alert("Finish at least one trip by entering its ending mileage before exporting.");
+      return;
+    }
+    if (inProgressCount > 0) {
+      alert(inProgressCount + " in-progress trip(s) will stay saved and will not be included in this export.");
+    }
+    exportMileageLog({
+      name: currentProfile.name,
+      employeeNumber: currentProfile.employeeNumber || "",
+      deptStore: currentProfile.deptStore || ""
+    }, completedTrips);
+  }
+
+  function doExportMileagePdf() {
+    var completedTrips = mileageTrips.filter(tripIsComplete);
+    var inProgressCount = mileageTrips.length - completedTrips.length;
+    if (completedTrips.length === 0) {
+      alert("Finish at least one trip by entering its ending mileage before exporting.");
+      return;
+    }
+    if (inProgressCount > 0) {
+      alert(inProgressCount + " in-progress trip(s) will stay saved and will not be included in this PDF.");
+    }
+    exportMileagePdf({
+      name: currentProfile.name,
+      employeeNumber: currentProfile.employeeNumber || "",
+      deptStore: currentProfile.deptStore || ""
+    }, completedTrips);
+  }
+
+  function renderMileage() {
+    var listEl = document.getElementById("mileageList");
+    listEl.innerHTML = "";
+    var totalMiles = 0, totalAmount = 0;
+
+    if (mileageTrips.length === 0) {
+      listEl.innerHTML = '<li class="log-empty">No trips logged yet.</li>';
+    } else {
+      mileageTrips.forEach(function (t, idx) {
+        var isComplete = tripIsComplete(t);
+        var miles = tripMiles(t);
+        var amount = tripAmount(t);
+        totalMiles += miles;
+        totalAmount += amount;
+
+        var li = document.createElement("li");
+        li.className = "mileage-trip-row";
+        if (!isComplete) li.className += " in-progress";
+
+        var main = document.createElement("div");
+        main.className = "mileage-trip-main";
+        var descDiv = document.createElement("div");
+        descDiv.className = "trip-desc";
+        descDiv.textContent = t.description;
+        var metaDiv = document.createElement("div");
+        metaDiv.className = "trip-meta";
+        var dateRange = !t.endDate || t.beginDate === t.endDate ? fmtHeaderDate(t.beginDate) : fmtHeaderDate(t.beginDate) + " \u2192 " + fmtHeaderDate(t.endDate);
+        metaDiv.textContent = isComplete
+          ? dateRange + " \u2022 " + t.beginOdometer + " \u2192 " + t.endOdometer + " mi"
+          : dateRange + " \u2022 Starting: " + t.beginOdometer + " mi";
+        main.appendChild(descDiv);
+        main.appendChild(metaDiv);
+
+        var amountDiv = document.createElement("div");
+        amountDiv.className = "mileage-trip-amount";
+        amountDiv.textContent = isComplete ? miles + " mi \u2014 $" + amount.toFixed(2) : "In progress";
+        if (!isComplete) amountDiv.className += " is-pending";
+
+        var editBtn = document.createElement("button");
+        editBtn.className = "edit-link";
+        editBtn.textContent = isComplete ? "edit" : "finish";
+        editBtn.onclick = function () { doEditTripStart(idx); };
+
+        var delBtn = document.createElement("button");
+        delBtn.className = "del";
+        delBtn.title = "Delete this trip";
+        delBtn.textContent = "\u2715";
+        delBtn.onclick = function () { doDeleteTrip(idx); };
+
+        li.appendChild(main);
+        li.appendChild(amountDiv);
+        li.appendChild(editBtn);
+        li.appendChild(delBtn);
+        listEl.appendChild(li);
+      });
+    }
+
+    document.getElementById("mileageTotal").textContent = totalMiles + " mi \u2014 $" + totalAmount.toFixed(2);
+  }
+
+  // ---------- actions ----------
+  function doClockIn() {
+    var data = clone(getDayData(todayStr));
+    if (currentOpenSession(data)) return;
+    var now = new Date().toISOString();
+    data.sessions.push({ clockIn: now, clockOut: null });
+    setBtnBusy(true);
+    saveDay(todayStr, data, "clock_in", "Clocked in at " + fmtTime(now) + " CT.").finally(function () { setBtnBusy(false); });
+  }
+  function doClockOut() {
+    var data = clone(getDayData(todayStr));
+    var open = currentOpenSession(data);
+    if (!open) return;
+    open.clockOut = new Date().toISOString();
+    setBtnBusy(true);
+    saveDay(todayStr, data, "clock_out", "Clocked out at " + fmtTime(open.clockOut) + " CT.").finally(function () { setBtnBusy(false); });
+  }
+  function doAddNote(text) {
+    text = text.trim();
+    if (!text) return;
+    var data = clone(getDayData(todayStr));
+    data.notes.push({ time: new Date().toISOString(), text: text });
+    saveDay(todayStr, data, "note_added", "Added note: " + text);
+  }
+  function doDeleteNote(dateStr, idx) {
+    var data = clone(getDayData(dateStr));
+    var removed = data.notes.splice(idx, 1)[0];
+    saveDay(dateStr, data, "note_deleted", "Deleted note: " + ((removed && removed.text) || "(blank note)"));
+  }
+  function doEditNote(dateStr, idx, newText, timeVal) {
+    var data = clone(getDayData(dateStr));
+    var note = data.notes[idx];
+    if (!note) return;
+    newText = newText.trim();
+    if (newText) note.text = newText;
+    if (timeVal) note.time = fromTimeInputValue(dateStr, timeVal);
+    saveDay(dateStr, data, "note_edited", "Edited a work note at " + (timeVal || timeInputValue(note.time)) + " CT.");
+  }
+  function doDeleteSession(dateStr, idx) {
+    var data = clone(getDayData(dateStr));
+    var removed = data.sessions.splice(idx, 1)[0];
+    var summary = removed ? ((removed.clockIn ? "in " + fmtTime(removed.clockIn) : "no clock-in") + ", " + (removed.clockOut ? "out " + fmtTime(removed.clockOut) : "no clock-out")) : "punch";
+    saveDay(dateStr, data, "punch_deleted", "Deleted punch (" + summary + ").");
+  }
+  function doEditSession(dateStr, idx, field, timeVal) {
+    var data = clone(getDayData(dateStr));
+    var sess = data.sessions[idx];
+    if (!sess) return;
+    var oldValue = sess[field];
+    sess[field] = fromTimeInputValue(dateStr, timeVal);
+    saveDay(dateStr, data, "punch_edited", "Changed " + (field === "clockIn" ? "clock-in" : "clock-out") + " from " + fmtTime(oldValue) + " to " + fmtTime(sess[field]) + " CT.");
+  }
+
+  function doAddPunch() {
+    var inVal = document.getElementById("punchInTime").value;
+    var outVal = document.getElementById("punchOutTime").value;
+    if (!inVal && !outVal) {
+      alert("Enter a clock-in time, a clock-out time, or both.");
+      return;
+    }
+    var data = clone(getDayData(viewedDate));
+    var isToday = viewedDate === todayStr;
+    if (inVal && !outVal && isToday && currentOpenSession(data)) {
+      alert("You're already clocked in today. Add a clock-out time here, or use the Clock Out button above.");
+      return;
+    }
+    var clockIn = inVal ? fromTimeInputValue(viewedDate, inVal) : null;
+    var clockOut = outVal ? fromTimeInputValue(viewedDate, outVal) : null;
+    if (clockIn && clockOut && new Date(clockOut) < new Date(clockIn)) {
+      alert("Clock-out time should be after the clock-in time.");
+      return;
+    }
+
+    if (!clockIn && clockOut) {
+      // If this day already has an unmatched clock-in before the new
+      // clock-out, complete that session. Otherwise keep the clock-out
+      // as a standalone punch so the employee can record exactly what
+      // is known without inventing a clock-in time.
+      var openIndex = -1;
+      var latestOpenTime = -Infinity;
+      data.sessions.forEach(function (session, idx) {
+        if (!session.clockIn || session.clockOut) return;
+        var openTime = new Date(session.clockIn).getTime();
+        if (openTime <= new Date(clockOut).getTime() && openTime > latestOpenTime) {
+          openIndex = idx;
+          latestOpenTime = openTime;
+        }
+      });
+      if (openIndex >= 0) data.sessions[openIndex].clockOut = clockOut;
+      else data.sessions.push({ clockIn: null, clockOut: clockOut });
+    } else {
+      data.sessions.push({ clockIn: clockIn, clockOut: clockOut });
+    }
+    var detail = "Added " + (inVal ? "clock-in " + fmtTime(clockIn) : "no clock-in") + " and " + (outVal ? "clock-out " + fmtTime(clockOut) : "no clock-out") + " CT.";
+    saveDay(viewedDate, data, "punch_added", detail);
+    document.getElementById("punchInTime").value = "";
+    document.getElementById("punchOutTime").value = "";
+  }
+
+  function setBtnBusy(busy) { document.getElementById("punchBtn").disabled = busy; }
+
+  // ---------- rendering ----------
+  function tickClock() {
+    var now = new Date();
+    if (localDateStr(now) !== todayStr) {
+      window.location.reload();
+      return;
+    }
+    document.getElementById("liveClock").textContent = fmtTimeSec(now);
+    if (viewedDate === todayStr) {
+      var data = getDayData(todayStr);
+      var open = currentOpenSession(data);
+      var statusEl = document.getElementById("clockStatus");
+      if (open) statusEl.textContent = "Clocked in since " + fmtTime(open.clockIn);
+      else if (data.sessions.length) statusEl.textContent = "Clocked out";
+      else statusEl.textContent = "Not clocked in yet today";
+      document.getElementById("totalTime").textContent = fmtDuration(totalMinutesFor(data));
+      var runningEl = document.querySelector('[data-running="1"]');
+      if (runningEl && open) runningEl.textContent = "(" + fmtDuration(minutesBetween(open.clockIn, now.toISOString())) + " so far)";
+    }
+  }
+
+  function updatePunchButton() {
+    var btn = document.getElementById("punchBtn");
+    if (viewedDate !== todayStr) { btn.style.display = "none"; return; }
+    btn.style.display = "inline-block";
+    var open = currentOpenSession(getDayData(todayStr));
+    if (open) { btn.className = "punch-btn out"; btn.textContent = "Clock Out"; }
+    else { btn.className = "punch-btn in"; btn.textContent = "Clock In"; }
+  }
+
+  function renderViewed() {
+    var data = getDayData(viewedDate);
+    document.getElementById("logTitle").textContent = viewedDate === todayStr ? "Today's log" : fmtHeaderDate(viewedDate) + " log";
+    document.getElementById("totalTime").textContent = fmtDuration(totalMinutesFor(data));
+    updatePunchButton();
+
+    var punchOutLabel = document.querySelector('label[for="punchOutTime"]');
+    if (punchOutLabel) {
+      punchOutLabel.textContent = "Clock out (optional)";
+    }
+
+    var banner = document.getElementById("viewingBanner");
+    if (viewedDate !== todayStr) {
+      banner.style.display = "flex";
+      document.getElementById("viewingText").textContent = "Viewing " + fmtHeaderDate(viewedDate);
+    } else {
+      banner.style.display = "none";
+    }
+    document.getElementById("addNotePanel").style.display = viewedDate === todayStr ? "block" : "none";
+    var manualPunchDetails = document.getElementById("manualPunchDetails");
+    if (manualPunchDetails && viewedDate !== todayStr) manualPunchDetails.open = true;
+
+    var rows = [];
+    (data.sessions || []).forEach(function (s, idx) {
+      if (s.clockIn) rows.push({ t: s.clockIn, type: "in", idx: idx, sess: s });
+      if (s.clockOut) rows.push({ t: s.clockOut, type: "out", idx: idx, sess: s });
+    });
+    (data.notes || []).forEach(function (n, idx) {
+      rows.push({ t: n.time, type: "note", idx: idx, text: n.text });
+    });
+    (data.completedTodos || []).forEach(function (ct, idx) {
+      rows.push({ t: ct.completedAt, type: "todo", idx: idx, text: ct.text, assignedTaskId: ct.assignedTaskId });
+    });
+    rows.sort(function (a, b) { return new Date(a.t) - new Date(b.t); });
+
+    var list = document.getElementById("logList");
+    list.innerHTML = "";
+    if (rows.length === 0) {
+      list.innerHTML = '<li class="log-empty">No entries yet.</li>';
+    } else {
+      rows.forEach(function (r) {
+        var li = document.createElement("li");
+        li.className = "log-row";
+        var timeDiv = document.createElement("div");
+        timeDiv.className = "log-time";
+        timeDiv.textContent = fmtTime(r.t);
+        li.appendChild(timeDiv);
+
+        var bodyDiv = document.createElement("div");
+        bodyDiv.className = "log-body";
+
+        if (r.type === "in") {
+          bodyDiv.classList.add("session-in");
+          bodyDiv.textContent = "Clocked in";
+          li.appendChild(bodyDiv);
+          li.appendChild(makeSessionEditControls(viewedDate, r.idx, "clockIn"));
+        } else if (r.type === "out") {
+          bodyDiv.classList.add("session-out");
+          bodyDiv.textContent = "Clocked out";
+          if (r.sess.clockIn) {
+            var dur = document.createElement("span");
+            dur.className = "dur";
+            dur.textContent = "(" + fmtDuration(minutesBetween(r.sess.clockIn, r.sess.clockOut)) + ")";
+            bodyDiv.appendChild(dur);
+          }
+          li.appendChild(bodyDiv);
+          li.appendChild(makeSessionEditControls(viewedDate, r.idx, "clockOut"));
+        } else if (r.type === "todo") {
+          bodyDiv.classList.add("todo-done");
+          bodyDiv.textContent = "\u2713 " + r.text;
+          li.appendChild(bodyDiv);
+          li.appendChild(makeTodoEditControls(viewedDate, r.idx, r.text, r.t, r.assignedTaskId));
+        } else {
+          bodyDiv.textContent = r.text;
+          li.appendChild(bodyDiv);
+          li.appendChild(makeNoteEditControls(viewedDate, r.idx, r.text, r.t));
+        }
+        list.appendChild(li);
+      });
+    }
+  }
+
+  function makeSessionEditControls(dateStr, idx, field) {
+    var wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "2px";
+
+    var editLink = document.createElement("button");
+    editLink.className = "edit-link";
+    editLink.textContent = "edit";
+    var delBtn = document.createElement("button");
+    delBtn.className = "del";
+    delBtn.title = "Delete this punch";
+    delBtn.textContent = "\u2715";
+    delBtn.onclick = function () { doDeleteSession(dateStr, idx); };
+
+    editLink.onclick = function () {
+      var data = getDayData(dateStr);
+      var sess = data.sessions[idx];
+      var currentIso = sess[field];
+      var input = document.createElement("input");
+      input.type = "time";
+      input.value = timeInputValue(currentIso);
+      var saveBtn = document.createElement("button");
+      saveBtn.textContent = "Save";
+      var box = document.createElement("div");
+      saveBtn.onclick = function () {
+        doEditSession(dateStr, idx, field, input.value);
+        box.remove();
+        editLink.disabled = false;
+      };
+      var row = wrap.parentElement;
+      box.className = "edit-inline";
+      box.appendChild(input);
+      box.appendChild(saveBtn);
+      row.appendChild(box);
+      editLink.disabled = true;
+    };
+
+    wrap.appendChild(editLink);
+    wrap.appendChild(delBtn);
+    return wrap;
+  }
+
+  function makeNoteEditControls(dateStr, idx, currentText, currentTimeIso) {
+    var wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "2px";
+
+    var editLink = document.createElement("button");
+    editLink.className = "edit-link";
+    editLink.textContent = "edit";
+    var delBtn = document.createElement("button");
+    delBtn.className = "del";
+    delBtn.title = "Delete this note";
+    delBtn.textContent = "\u2715";
+    delBtn.onclick = function () { doDeleteNote(dateStr, idx); };
+
+    editLink.onclick = function () {
+      var input = document.createElement("input");
+      input.type = "text";
+      input.value = currentText;
+      input.style.flex = "1";
+      input.style.minWidth = "140px";
+      input.style.fontFamily = "'Source Sans 3', sans-serif";
+      input.style.fontSize = "16px";
+      input.style.padding = "3px 6px";
+      input.style.border = "1px solid var(--line)";
+      input.style.borderRadius = "4px";
+      input.style.background = "var(--paper)";
+      input.style.color = "var(--ink)";
+
+      var timeInput = document.createElement("input");
+      timeInput.type = "time";
+      timeInput.value = timeInputValue(currentTimeIso);
+
+      var saveBtn = document.createElement("button");
+      saveBtn.textContent = "Save";
+      var box = document.createElement("div");
+      saveBtn.onclick = function () {
+        doEditNote(dateStr, idx, input.value, timeInput.value);
+        box.remove();
+        editLink.disabled = false;
+      };
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") saveBtn.click();
+      });
+
+      var row = wrap.parentElement;
+      box.className = "edit-inline";
+      box.style.flex = "1";
+      box.appendChild(input);
+      box.appendChild(timeInput);
+      box.appendChild(saveBtn);
+      row.appendChild(box);
+      editLink.disabled = true;
+    };
+
+    wrap.appendChild(editLink);
+    wrap.appendChild(delBtn);
+    return wrap;
+  }
+
+  // Lets you correct a completed to-do's text and/or the time it was
+  // completed, in one inline editor — same pattern as note editing.
+  function makeTodoEditControls(dateStr, idx, currentText, currentTimeIso, assignedTaskId) {
+    var wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "2px";
+
+    var editLink = document.createElement("button");
+    editLink.className = "edit-link";
+    editLink.textContent = "edit";
+    var delBtn = document.createElement("button");
+    delBtn.className = "del";
+    delBtn.title = "Remove this from the log";
+    delBtn.textContent = "\u2715";
+    delBtn.onclick = function () { doDeleteCompletedTodo(dateStr, idx); };
+    var restoreBtn = document.createElement("button");
+    restoreBtn.className = "edit-link";
+    restoreBtn.title = assignedTaskId
+      ? "Undo \u2014 mark this assigned task not-done again"
+      : "Undo \u2014 put this back on your to-do list";
+    restoreBtn.textContent = "undo";
+    restoreBtn.onclick = function () { doRestoreCompletedTodo(dateStr, idx); };
+
+    editLink.onclick = function () {
+      var textInput = document.createElement("input");
+      textInput.type = "text";
+      textInput.value = currentText;
+      textInput.style.flex = "1";
+      textInput.style.minWidth = "140px";
+      textInput.style.fontFamily = "'Source Sans 3', sans-serif";
+      textInput.style.fontSize = "16px";
+      textInput.style.padding = "3px 6px";
+      textInput.style.border = "1px solid var(--line)";
+      textInput.style.borderRadius = "4px";
+      textInput.style.background = "var(--paper)";
+      textInput.style.color = "var(--ink)";
+
+      var timeInput = document.createElement("input");
+      timeInput.type = "time";
+      timeInput.value = timeInputValue(currentTimeIso);
+
+      var saveBtn = document.createElement("button");
+      saveBtn.textContent = "Save";
+      var box = document.createElement("div");
+      saveBtn.onclick = function () {
+        doEditCompletedTodo(dateStr, idx, textInput.value, timeInput.value);
+        box.remove();
+        editLink.disabled = false;
+      };
+      textInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") saveBtn.click();
+      });
+
+      var row = wrap.parentElement;
+      box.className = "edit-inline";
+      box.style.flex = "1";
+      box.appendChild(textInput);
+      box.appendChild(timeInput);
+      box.appendChild(saveBtn);
+      row.appendChild(box);
+      editLink.disabled = true;
+    };
+
+    wrap.appendChild(editLink);
+    wrap.appendChild(restoreBtn);
+    wrap.appendChild(delBtn);
+    return wrap;
+  }
+
+  function renderHistoryList(entries) {
+    var listEl = document.getElementById("historyList");
+    listEl.innerHTML = "";
+    if (entries.length === 0) {
+      listEl.innerHTML = '<div class="log-empty">No past days logged yet.</div>';
+      return;
+    }
+    entries.forEach(function (e) {
+      var row = document.createElement("div");
+      row.className = "history-row" + (e.id === viewedDate ? " active" : "");
+      row.style.display = "flex";
+      row.style.justifyContent = "space-between";
+      row.style.alignItems = "center";
+      row.style.flexWrap = "wrap";
+      row.style.gap = "6px";
+      row.style.padding = "8px 0";
+      row.style.borderBottom = "1px dashed var(--line)";
+      var left = document.createElement("span");
+      left.style.fontFamily = "'Barlow Condensed', sans-serif";
+      left.style.fontWeight = "600";
+      left.textContent = fmtHeaderDate(e.id);
+      var right = document.createElement("div");
+      right.style.display = "flex";
+      right.style.gap = "10px";
+      right.style.alignItems = "center";
+      right.style.flexWrap = "wrap";
+      var total = document.createElement("span");
+      total.style.fontFamily = "'Space Mono', monospace";
+      total.style.color = "var(--ink-soft)";
+      total.textContent = fmtDuration(totalMinutesFor(e.data));
+      var viewBtn = document.createElement("button");
+      viewBtn.className = "btn secondary";
+      viewBtn.style.padding = "4px 10px";
+      viewBtn.style.fontSize = "14px";
+      var isActive = e.id === viewedDate;
+      viewBtn.textContent = isActive ? "Close" : "View";
+      viewBtn.onclick = function () { switchToDate(isActive ? todayStr : e.id); };
+      right.appendChild(total);
+      right.appendChild(viewBtn);
+
+      var archived = archivesByDate[e.id];
+      if (archived) {
+        var pdfBtn = document.createElement("button");
+        pdfBtn.className = "btn secondary";
+        pdfBtn.style.padding = "4px 10px";
+        pdfBtn.style.fontSize = "14px";
+        pdfBtn.title = "The saved PDF snapshot from 11:59pm that night";
+        pdfBtn.textContent = "PDF";
+        pdfBtn.onclick = function () {
+          exportDayPdf(archived.name, archived.date, {
+            sessions: archived.sessions || [],
+            notes: archived.notes || [],
+            completedTodos: archived.completedTodos || []
+          });
+        };
+        right.appendChild(pdfBtn);
+      }
+      row.appendChild(left);
+      row.appendChild(right);
+      listEl.appendChild(row);
+    });
+  }
+
+  function switchToDate(dateStr) {
+    viewedDate = dateStr;
+    subscribeToDay(dateStr);
+    renderViewed();
+    renderHistoryList(lastHistoryEntries);
+    switchAppTab("log");
+    document.getElementById("logTitle").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  var lastHistoryEntries = [];
+
+  function subscribeToDay(dateStr) {
+    if (unsubViewed) { unsubViewed(); unsubViewed = null; }
+    unsubViewed = entryRef(dateStr).onSnapshot(function (snap) {
+      var data = snap.exists ? snap.data() : emptyDay();
+      docCache[dateStr] = { sessions: data.sessions || [], notes: data.notes || [], completedTodos: data.completedTodos || [] };
+      if (dateStr === viewedDate) renderViewed();
+    }, function (err) { console.error("entry snapshot error", err); });
+  }
+
+  function subscribeHistory() {
+    var since = localDateStr(new Date(Date.now() - 60 * 24 * 3600 * 1000));
+    unsubHistory = db.collection("entries")
+      .where("uid", "==", currentUser.uid)
+      .where("date", ">=", since)
+      .orderBy("date", "desc")
+      .limit(60)
+      .onSnapshot(function (snap) {
+        var entries = [];
+        snap.docs.forEach(function (d) {
+          var data = d.data();
+          docCache[data.date] = { sessions: data.sessions || [], notes: data.notes || [], completedTodos: data.completedTodos || [] };
+          if (data.date !== todayStr) entries.push({ id: data.date, data: docCache[data.date] });
+        });
+        lastHistoryEntries = entries;
+        renderHistoryList(entries);
+      }, function (err) { console.error("history snapshot error", err); });
+  }
+
+  function exportPdf() {
+    var pending = viewedDate === todayStr ? todoItems : null;
+    exportDayPdf(currentProfile.name, viewedDate, getDayData(viewedDate), pending);
+  }
+
+  function exportCsv() {
+    var pending = viewedDate === todayStr ? todoItems : null;
+    exportDayCsv(currentProfile.name, viewedDate, getDayData(viewedDate), pending);
+  }
+
+  var archivesByDate = {};
+
+  function subscribeArchives() {
+    unsubArchives = db.collection("archives").where("uid", "==", currentUser.uid).onSnapshot(function (snap) {
+      archivesByDate = {};
+      snap.docs.forEach(function (d) {
+        var data = d.data();
+        archivesByDate[data.date] = data;
+      });
+      renderHistoryList(lastHistoryEntries);
+    }, function (err) { console.error("archives snapshot error", err); });
+  }
+
+  function switchAppTab(tab) {
+    var panels = {
+      log: document.getElementById("logTab"),
+      mileage: document.getElementById("mileageTab"),
+      pastdays: document.getElementById("pastDaysTab"),
+      weekly: document.getElementById("weeklyApprovalTab"),
+      approvals: document.getElementById("approvalsTab")
+    };
+    var buttons = {
+      log: document.getElementById("tabLogBtn"),
+      mileage: document.getElementById("tabMileageBtn"),
+      pastdays: document.getElementById("tabPastDaysBtn"),
+      weekly: document.getElementById("tabWeeklyBtn"),
+      approvals: document.getElementById("tabApprovalsBtn")
+    };
+    Object.keys(panels).forEach(function (key) {
+      panels[key].style.display = key === tab ? "block" : "none";
+      buttons[key].classList.toggle("active", key === tab);
+    });
+    if (tab === "weekly") renderSelectedWorkWeek();
+  }
+
+  function wireHandlers() {
+    document.getElementById("tabLogBtn").onclick = function () { switchAppTab("log"); };
+    document.getElementById("tabMileageBtn").onclick = function () { switchAppTab("mileage"); };
+    document.getElementById("tabPastDaysBtn").onclick = function () { switchAppTab("pastdays"); };
+    document.getElementById("tabWeeklyBtn").onclick = function () { switchAppTab("weekly"); };
+    document.getElementById("tabApprovalsBtn").onclick = function () { switchAppTab("approvals"); };
+    document.getElementById("previousWeekBtn").onclick = function () {
+      selectedApprovalWeekStart = shiftWorkDate(selectedApprovalWeekStart, -7);
+      renderSelectedWorkWeek();
+    };
+    document.getElementById("thisWeekBtn").onclick = function () {
+      selectedApprovalWeekStart = mondayForWorkDate(todayStr);
+      renderSelectedWorkWeek();
+    };
+    document.getElementById("approvalWeekPicker").onchange = function (event) {
+      if (!event.target.value) return;
+      selectedApprovalWeekStart = mondayForWorkDate(event.target.value);
+      renderSelectedWorkWeek();
+    };
+    document.getElementById("submitWeekBtn").onclick = submitSelectedWorkWeek;
+    document.getElementById("punchBtn").onclick = function () {
+      currentOpenSession(getDayData(todayStr)) ? doClockOut() : doClockIn();
+    };
+    document.getElementById("noteAddBtn").onclick = function () {
+      var input = document.getElementById("noteInput");
+      doAddNote(input.value);
+      input.value = "";
+    };
+    document.getElementById("noteInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") document.getElementById("noteAddBtn").click();
+    });
+    document.getElementById("todoAddBtn").onclick = function () {
+      var input = document.getElementById("todoInput");
+      doAddTodo(input.value);
+      input.value = "";
+    };
+    document.getElementById("todoInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") document.getElementById("todoAddBtn").click();
+    });
+    document.getElementById("todoExportPdfBtn").onclick = function () {
+      var exportItems = todoItems.concat(assignedTasks.filter(function (task) { return task.status === "assigned"; }).map(function (task) {
+        return { text: task.text + " (Assigned by " + (task.assignedByName || "Manager") + ")" };
+      }));
+      exportTodoListPdf(currentProfile.name, exportItems);
+    };
+    document.getElementById("todoExportCsvBtn").onclick = function () {
+      var exportItems = todoItems.concat(assignedTasks.filter(function (task) { return task.status === "assigned"; }).map(function (task) {
+        return { text: task.text + " (Assigned by " + (task.assignedByName || "Manager") + ")" };
+      }));
+      exportTodoListCsv(currentProfile.name, exportItems);
+    };
+    document.getElementById("mileageEmpNum").addEventListener("change", function (e) {
+      saveEmployeeInfo("employeeNumber", e.target.value.trim());
+    });
+    document.getElementById("mileageDeptStore").addEventListener("change", function (e) {
+      saveEmployeeInfo("deptStore", e.target.value.trim());
+    });
+    var endDateInput = document.getElementById("tripEndDate");
+    var endOdoInput = document.getElementById("tripEndOdo");
+    endDateInput.removeAttribute("required");
+    endOdoInput.removeAttribute("required");
+    endOdoInput.placeholder = "Enter at end of day";
+    document.getElementById("tripAddBtn").onclick = doAddOrUpdateTrip;
+    var mileageExcelBtn = document.getElementById("mileageExportBtn");
+    mileageExcelBtn.onclick = doExportMileage;
+    var mileagePdfBtn = document.getElementById("mileageExportPdfBtn");
+    if (!mileagePdfBtn) {
+      mileagePdfBtn = document.createElement("button");
+      mileagePdfBtn.type = "button";
+      mileagePdfBtn.id = "mileageExportPdfBtn";
+      mileagePdfBtn.className = mileageExcelBtn.className;
+      mileagePdfBtn.textContent = "Export Mileage Log (PDF)";
+      mileagePdfBtn.title = "Download the completed mileage reimbursement form as a PDF";
+      mileageExcelBtn.insertAdjacentElement("afterend", mileagePdfBtn);
+    }
+    mileagePdfBtn.onclick = doExportMileagePdf;
+    document.getElementById("mileageClearBtn").onclick = doClearMileage;
+    document.getElementById("mileageClearBtn").textContent = "Clear Completed";
+    document.getElementById("exportBtn").onclick = exportPdf;
+    document.getElementById("exportCsvBtn").onclick = exportCsv;
+    document.getElementById("punchAddBtn").onclick = doAddPunch;
+    document.getElementById("backToToday").onclick = function () { switchToDate(todayStr); };
+    document.getElementById("signOutBtn").onclick = function () { signOutUser(); };
+  }
+
+  function showApp(user, profile) {
+    currentUser = user;
+    currentProfile = profile;
+    document.getElementById("authScreen").style.display = "none";
+    document.getElementById("appScreen").style.display = "block";
+    document.getElementById("welcomeName").textContent = profile.name;
+    document.getElementById("adminLink").style.display = profile.role === "admin" ? "inline" : "none";
+    document.getElementById("headerDate").textContent = fmtHeaderDate(todayStr);
+    document.getElementById("mileageEmpNum").value = profile.employeeNumber || "";
+    document.getElementById("mileageDeptStore").value = profile.deptStore || "";
+    resetTripForm();
+    subscribeToDay(todayStr);
+    subscribeHistory();
+    subscribeArchives();
+    subscribeTodos();
+    subscribeAssignedTasks();
+    subscribeMileage();
+    subscribeApproverDirectory();
+    subscribeMyWeeklyApprovals();
+    subscribeAssignedWeeklyApprovals();
+    document.getElementById("approvalWeekPicker").max = todayStr;
+  }
+
+  function showAuth() {
+    currentUser = null;
+    currentProfile = null;
+    if (unsubViewed) { unsubViewed(); unsubViewed = null; }
+    if (unsubHistory) { unsubHistory(); unsubHistory = null; }
+    if (unsubArchives) { unsubArchives(); unsubArchives = null; }
+    if (unsubTodos) { unsubTodos(); unsubTodos = null; }
+    if (unsubAssignedTasks) { unsubAssignedTasks(); unsubAssignedTasks = null; }
+    if (unsubMileage) { unsubMileage(); unsubMileage = null; }
+    if (unsubApproverUsers) { unsubApproverUsers(); unsubApproverUsers = null; }
+    if (unsubMyApprovals) { unsubMyApprovals(); unsubMyApprovals = null; }
+    if (unsubAssignedApprovals) { unsubAssignedApprovals(); unsubAssignedApprovals = null; }
+    docCache = {};
+    todoItems = [];
+    assignedTasks = [];
+    mileageTrips = [];
+    approverUsers = [];
+    myWeeklyApprovals = {};
+    assignedWeeklyApprovals = [];
+    document.getElementById("authScreen").style.display = "block";
+    document.getElementById("appScreen").style.display = "none";
+  }
+
+  window.addEventListener("DOMContentLoaded", function () {
+    wireHandlers();
+    setInterval(tickClock, 1000);
+    tickClock();
+    onAuthReady(function (user, profile) {
+      if (user) showApp(user, profile); else showAuth();
+    });
+  });
+})();
