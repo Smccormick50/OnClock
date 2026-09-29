@@ -475,6 +475,50 @@
     if (timeVal) ct.completedAt = fromTimeInputValue(dateStr, timeVal);
     saveDay(dateStr, data, "completed_task_edited", "Edited a completed task at " + (timeVal || timeInputValue(ct.completedAt)) + " CT.");
   }
+  // Undoes an accidental "complete" — removes it from the day's log
+  // and, for a personal task, puts it back on the pending to-do list.
+  // A manager-assigned task instead goes back to "assigned" in the
+  // assignedTasks collection (it never lived on the personal list),
+  // and only while it's still awaiting approval — once a manager has
+  // approved it, this is no longer an available action.
+  function doRestoreCompletedTodo(dateStr, idx) {
+    var data = clone(getDayData(dateStr));
+    var removed = (data.completedTodos || [])[idx];
+    if (!removed) return;
+
+    function removeLogEntryAndSave() {
+      var freshData = clone(getDayData(dateStr));
+      freshData.completedTodos.splice(idx, 1);
+      saveDay(dateStr, freshData, "completed_task_restored", "Restored a completed task to the to-do list: " + (removed.text || "(blank task)"));
+    }
+
+    if (removed.assignedTaskId) {
+      var ref = db.collection("assignedTasks").doc(removed.assignedTaskId);
+      db.runTransaction(function (tx) {
+        return tx.get(ref).then(function (snap) {
+          if (!snap.exists || snap.data().status !== "completed") {
+            throw new Error("This task can no longer be restored \u2014 it may already be approved.");
+          }
+          tx.update(ref, {
+            status: "assigned",
+            completedAt: firebase.firestore.FieldValue.delete(),
+            completedAtIso: firebase.firestore.FieldValue.delete(),
+            completedByUid: firebase.firestore.FieldValue.delete(),
+            completedByName: firebase.firestore.FieldValue.delete(),
+            lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        });
+      }).then(removeLogEntryAndSave).catch(function (err) {
+        console.error("restore assigned task error", err);
+        alert(err.message || "This assigned task could not be restored. Please try again.");
+      });
+    } else {
+      var items = clone(todoItems);
+      items.push({ text: removed.text, createdAt: new Date().toISOString() });
+      saveTodos(items);
+      removeLogEntryAndSave();
+    }
+  }
 
   function renderTodos() {
     var listEl = document.getElementById("todoList");
@@ -1038,7 +1082,7 @@
       rows.push({ t: n.time, type: "note", idx: idx, text: n.text });
     });
     (data.completedTodos || []).forEach(function (ct, idx) {
-      rows.push({ t: ct.completedAt, type: "todo", idx: idx, text: ct.text });
+      rows.push({ t: ct.completedAt, type: "todo", idx: idx, text: ct.text, assignedTaskId: ct.assignedTaskId });
     });
     rows.sort(function (a, b) { return new Date(a.t) - new Date(b.t); });
 
@@ -1078,7 +1122,7 @@
           bodyDiv.classList.add("todo-done");
           bodyDiv.textContent = "\u2713 " + r.text;
           li.appendChild(bodyDiv);
-          li.appendChild(makeTodoEditControls(viewedDate, r.idx, r.text, r.t));
+          li.appendChild(makeTodoEditControls(viewedDate, r.idx, r.text, r.t, r.assignedTaskId));
         } else {
           bodyDiv.textContent = r.text;
           li.appendChild(bodyDiv);
@@ -1194,7 +1238,7 @@
 
   // Lets you correct a completed to-do's text and/or the time it was
   // completed, in one inline editor — same pattern as note editing.
-  function makeTodoEditControls(dateStr, idx, currentText, currentTimeIso) {
+  function makeTodoEditControls(dateStr, idx, currentText, currentTimeIso, assignedTaskId) {
     var wrap = document.createElement("div");
     wrap.style.display = "flex";
     wrap.style.alignItems = "center";
@@ -1208,6 +1252,13 @@
     delBtn.title = "Remove this from the log";
     delBtn.textContent = "\u2715";
     delBtn.onclick = function () { doDeleteCompletedTodo(dateStr, idx); };
+    var restoreBtn = document.createElement("button");
+    restoreBtn.className = "edit-link";
+    restoreBtn.title = assignedTaskId
+      ? "Undo \u2014 mark this assigned task not-done again"
+      : "Undo \u2014 put this back on your to-do list";
+    restoreBtn.textContent = "undo";
+    restoreBtn.onclick = function () { doRestoreCompletedTodo(dateStr, idx); };
 
     editLink.onclick = function () {
       var textInput = document.createElement("input");
@@ -1250,6 +1301,7 @@
     };
 
     wrap.appendChild(editLink);
+    wrap.appendChild(restoreBtn);
     wrap.appendChild(delBtn);
     return wrap;
   }
