@@ -394,6 +394,28 @@
     item.text = newText;
     saveTodos(items);
   }
+  var TODO_PRIORITY_ORDER = ["", "low", "medium", "high"];
+  var TODO_PRIORITY_META = {
+    "": { label: "No priority", short: "" },
+    low: { label: "Low priority", short: "Low" },
+    medium: { label: "Medium priority", short: "Med" },
+    high: { label: "High priority", short: "High" }
+  };
+  function doCyclePriority(idx) {
+    var items = clone(todoItems);
+    var item = items[idx];
+    if (!item) return;
+    var current = TODO_PRIORITY_ORDER.indexOf(item.priority || "");
+    item.priority = TODO_PRIORITY_ORDER[(current + 1) % TODO_PRIORITY_ORDER.length];
+    saveTodos(items);
+  }
+  // Persists a full reorder of the personal list. `orderedItems` is the
+  // complete items array in its new order (built during the drag, in
+  // renderTodos below) — saved once, when the drag ends, not on every
+  // pointer move.
+  function doReorderTodos(orderedItems) {
+    saveTodos(orderedItems);
+  }
   function doCompleteTodo(idx) {
     var items = clone(todoItems);
     var item = items[idx];
@@ -500,9 +522,31 @@
       personalHeading.textContent = "My personal tasks";
       listEl.appendChild(personalHeading);
     }
+    var personalListEl = document.createElement("ul");
+    personalListEl.className = "todo-personal-list";
+    personalListEl.style.listStyle = "none";
+    personalListEl.style.margin = "0";
+    personalListEl.style.padding = "0";
     todoItems.forEach(function (item, idx) {
       var li = document.createElement("li");
-      li.className = "todo-row";
+      li.className = "todo-row personal-todo";
+      li.dataset.idx = String(idx);
+
+      var dragHandle = document.createElement("button");
+      dragHandle.type = "button";
+      dragHandle.className = "todo-drag-handle";
+      dragHandle.title = "Drag to reorder";
+      dragHandle.setAttribute("aria-label", "Drag to reorder");
+      dragHandle.textContent = "\u2261";
+      dragHandle.onpointerdown = function (e) { startTodoDrag(e, li, personalListEl); };
+
+      var priorityBtn = document.createElement("button");
+      priorityBtn.type = "button";
+      var priorityKey = item.priority || "";
+      priorityBtn.className = "todo-priority-flag priority-" + (priorityKey || "none");
+      priorityBtn.title = TODO_PRIORITY_META[priorityKey].label + " \u2014 tap to change";
+      priorityBtn.textContent = TODO_PRIORITY_META[priorityKey].short || "\u2691";
+      priorityBtn.onclick = function () { doCyclePriority(idx); };
 
       var checkbox = document.createElement("input");
       checkbox.type = "checkbox";
@@ -555,12 +599,73 @@
       del.textContent = "\u2715";
       del.onclick = function () { doDeleteTodo(idx); };
 
+      li.appendChild(dragHandle);
+      li.appendChild(priorityBtn);
       li.appendChild(checkbox);
       li.appendChild(textSpan);
       li.appendChild(editLink);
       li.appendChild(del);
-      listEl.appendChild(li);
+      personalListEl.appendChild(li);
     });
+    if (todoItems.length) listEl.appendChild(personalListEl);
+  }
+
+  // ---------- drag-to-reorder for personal to-dos ----------
+  // Uses Pointer Events (not the old HTML5 drag-and-drop API, which is
+  // mouse-only and doesn't work on a touchscreen — this list is used on
+  // phones every day). One pointer stream handles mouse, touch, and pen
+  // alike. Reordering happens live for visual feedback; the new order is
+  // only saved once, on release.
+  var todoDrag = null;
+  function startTodoDrag(e, li, listEl) {
+    e.preventDefault();
+    var rows = Array.prototype.slice.call(listEl.querySelectorAll(".personal-todo"));
+    todoDrag = {
+      pointerId: e.pointerId,
+      li: li,
+      listEl: listEl,
+      order: rows.map(function (row) { return Number(row.dataset.idx); }) // current display order, by original todoItems index
+    };
+    li.setPointerCapture(e.pointerId);
+    li.classList.add("dragging");
+    li.addEventListener("pointermove", onTodoDragMove);
+    li.addEventListener("pointerup", endTodoDrag);
+    li.addEventListener("pointercancel", endTodoDrag);
+  }
+  function onTodoDragMove(e) {
+    if (!todoDrag || e.pointerId !== todoDrag.pointerId) return;
+    var rows = Array.prototype.slice.call(todoDrag.listEl.querySelectorAll(".personal-todo"));
+    var draggedPos = rows.indexOf(todoDrag.li);
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i] === todoDrag.li) continue;
+      var rect = rows[i].getBoundingClientRect();
+      var midpoint = rect.top + rect.height / 2;
+      var targetPos = rows.indexOf(rows[i]);
+      if (e.clientY < midpoint && targetPos < draggedPos) {
+        todoDrag.listEl.insertBefore(todoDrag.li, rows[i]);
+        break;
+      }
+      if (e.clientY > midpoint && targetPos > draggedPos) {
+        todoDrag.listEl.insertBefore(todoDrag.li, rows[i].nextSibling);
+        break;
+      }
+    }
+  }
+  function endTodoDrag(e) {
+    if (!todoDrag || e.pointerId !== todoDrag.pointerId) return;
+    var li = todoDrag.li, listEl = todoDrag.listEl;
+    li.removeEventListener("pointermove", onTodoDragMove);
+    li.removeEventListener("pointerup", endTodoDrag);
+    li.removeEventListener("pointercancel", endTodoDrag);
+    try { li.releasePointerCapture(todoDrag.pointerId); } catch (err) { /* already released */ }
+    li.classList.remove("dragging");
+
+    var newOrderIndexes = Array.prototype.slice.call(listEl.querySelectorAll(".personal-todo"))
+      .map(function (row) { return Number(row.dataset.idx); });
+    todoDrag = null;
+    var reordered = newOrderIndexes.map(function (originalIdx) { return todoItems[originalIdx]; });
+    var changed = reordered.some(function (item, i) { return item !== todoItems[i]; });
+    if (changed) doReorderTodos(reordered);
   }
 
   // ---------- mileage log (separate doc, not tied to a date) ----------
