@@ -678,21 +678,23 @@
   }
   function onTodoDragMove(e) {
     if (!todoDrag || e.pointerId !== todoDrag.pointerId) return;
-    var rows = Array.prototype.slice.call(todoDrag.listEl.querySelectorAll(".personal-todo"));
-    var draggedPos = rows.indexOf(todoDrag.li);
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i] === todoDrag.li) continue;
-      var rect = rows[i].getBoundingClientRect();
-      var midpoint = rect.top + rect.height / 2;
-      var targetPos = rows.indexOf(rows[i]);
-      if (e.clientY < midpoint && targetPos < draggedPos) {
-        todoDrag.listEl.insertBefore(todoDrag.li, rows[i]);
-        break;
-      }
-      if (e.clientY > midpoint && targetPos > draggedPos) {
-        todoDrag.listEl.insertBefore(todoDrag.li, rows[i].nextSibling);
-        break;
-      }
+    // Find where the pointer currently is relative to every OTHER row's
+    // midpoint, and insert directly there — not one row at a time from
+    // wherever the dragged item happened to be a moment ago. Stepping
+    // one row per event meant a fast or long drag lagged behind the
+    // finger, since it only ever advanced past the nearest crossed row
+    // before stopping to wait for the next move event.
+    var others = Array.prototype.slice.call(todoDrag.listEl.querySelectorAll(".personal-todo"))
+      .filter(function (row) { return row !== todoDrag.li; });
+    var insertBeforeEl = null;
+    for (var i = 0; i < others.length; i++) {
+      var rect = others[i].getBoundingClientRect();
+      if (e.clientY < rect.top + rect.height / 2) { insertBeforeEl = others[i]; break; }
+    }
+    if (insertBeforeEl) {
+      if (insertBeforeEl !== todoDrag.li.nextSibling) todoDrag.listEl.insertBefore(todoDrag.li, insertBeforeEl);
+    } else if (todoDrag.li !== todoDrag.listEl.lastElementChild) {
+      todoDrag.listEl.appendChild(todoDrag.li);
     }
   }
   function endTodoDrag(e) {
