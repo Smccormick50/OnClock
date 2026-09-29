@@ -171,6 +171,24 @@ service cloud.firestore {
                       ])
                     )
                     || (
+                      // Employee undoes their own accidental "complete" —
+                      // only while it's still awaiting approval. Once an
+                      // admin has approved it, this branch no longer
+                      // matches (status isn't 'completed' anymore) and
+                      // the correction has to go through them instead.
+                      isSignedIn()
+                      && resource.data.employeeUid == request.auth.uid
+                      && resource.data.status == 'completed'
+                      && request.resource.data.status == 'assigned'
+                      && request.resource.data.employeeUid == resource.data.employeeUid
+                      && request.resource.data.assignedByUid == resource.data.assignedByUid
+                      && request.resource.data.text == resource.data.text
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'status', 'completedAt', 'completedAtIso', 'completedByUid',
+                        'completedByName', 'lastUpdatedAt'
+                      ])
+                    )
+                    || (
                       isAdmin()
                       && resource.data.assignedByUid == request.auth.uid
                       && resource.data.status == 'completed'
