@@ -26,6 +26,12 @@
   var unsubMyApprovals = null;
   var unsubAssignedApprovals = null;
   var weekLoadToken = 0;
+  var unsubMyProfile = null;
+  var myViewerUids = []; // coworkers I've allowed to view my page, read only
+  var unsubSharedWithMe = null;
+  var sharedWithMeUsers = []; // coworkers who've allowed ME to view their page
+  var expandedSharedUid = null;
+  var sharedViewUnsubs = {}; // uid -> array of unsubscribe functions for an open shared view
 
   function entryRef(dateStr) {
     return db.collection("entries").doc(entryId(currentUser.uid, dateStr));
@@ -113,10 +119,217 @@
       approverUsers = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
       approverUsers.sort(function (a, b) { return String(a.name || a.email || "").localeCompare(String(b.name || b.email || "")); });
       populateApproverSelect();
+      renderViewerChecklist();
     }, function (err) {
       console.error("approver directory error", err);
       document.getElementById("weekApproverSelect").innerHTML = '<option value="">Approver list could not load</option>';
     });
+  }
+
+  // ---------- view-only page sharing ----------
+  // A user can name coworkers who may see their live clock status and
+  // to-do list, read only (users/{uid}.viewerUids, enforced in
+  // firestore.rules). This never grants any write access.
+
+  function subscribeMyProfile() {
+    unsubMyProfile = db.collection("users").doc(currentUser.uid).onSnapshot(function (snap) {
+      myViewerUids = (snap.exists && Array.isArray(snap.data().viewerUids)) ? snap.data().viewerUids : [];
+      renderViewerChecklist();
+    }, function (err) { console.error("my profile snapshot error", err); });
+  }
+
+  function renderViewerChecklist() {
+    var listEl = document.getElementById("viewerChecklist");
+    if (!listEl || !currentUser) return;
+    var others = approverUsers.filter(function (u) { return u.id !== currentUser.uid; });
+    if (!others.length) {
+      listEl.innerHTML = '<li class="log-empty">No other coworkers yet.</li>';
+      return;
+    }
+    listEl.innerHTML = "";
+    others.forEach(function (u) {
+      var li = document.createElement("li");
+      li.className = "todo-row";
+      var checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.id = "viewerCheck_" + u.id;
+      checkbox.checked = myViewerUids.indexOf(u.id) !== -1;
+      var label = document.createElement("label");
+      label.setAttribute("for", checkbox.id);
+      label.className = "todo-text";
+      label.textContent = u.name || u.email || "Employee";
+      li.appendChild(checkbox);
+      li.appendChild(label);
+      listEl.appendChild(li);
+    });
+  }
+
+  function doSaveViewers() {
+    var listEl = document.getElementById("viewerChecklist");
+    var checkedUids = Array.prototype.slice.call(listEl.querySelectorAll('input[type="checkbox"]'))
+      .filter(function (cb) { return cb.checked; })
+      .map(function (cb) { return cb.id.replace("viewerCheck_", ""); });
+    db.collection("users").doc(currentUser.uid).update({ viewerUids: checkedUids }).then(function () {
+      var note = document.getElementById("viewersSavedNote");
+      note.style.display = "inline";
+      setTimeout(function () { note.style.display = "none"; }, 2000);
+    }).catch(function (err) {
+      console.error("save viewers error", err);
+      alert("Could not save who can view your page — try again.");
+    });
+  }
+
+  function subscribeSharedWithMe() {
+    unsubSharedWithMe = db.collection("users").where("viewerUids", "array-contains", currentUser.uid)
+      .onSnapshot(function (snap) {
+        sharedWithMeUsers = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+        sharedWithMeUsers.sort(function (a, b) { return String(a.name || a.email || "").localeCompare(String(b.name || b.email || "")); });
+        renderSharedWithMeList();
+      }, function (err) {
+        console.error("shared-with-me error", err);
+        document.getElementById("sharedWithMeList").innerHTML = '<div class="log-empty">This list could not load.</div>';
+      });
+  }
+
+  function renderSharedWithMeList() {
+    var container = document.getElementById("sharedWithMeList");
+    if (!container) return;
+    if (!sharedWithMeUsers.length) {
+      container.innerHTML = '<div class="log-empty">Nobody has shared their page with you yet.</div>';
+      return;
+    }
+    container.innerHTML = "";
+    sharedWithMeUsers.forEach(function (u) {
+      var row = document.createElement("div");
+      row.className = "shared-person-row";
+
+      var head = document.createElement("div");
+      head.className = "shared-person-head";
+      var name = document.createElement("span");
+      name.className = "shared-person-name";
+      name.textContent = u.name || u.email || "Employee";
+      var toggleBtn = document.createElement("button");
+      toggleBtn.className = "btn secondary";
+      toggleBtn.textContent = expandedSharedUid === u.id ? "Hide" : "View";
+      toggleBtn.onclick = function () { toggleSharedView(u.id); };
+      head.appendChild(name);
+      head.appendChild(toggleBtn);
+      row.appendChild(head);
+
+      var body = document.createElement("div");
+      body.className = "shared-person-body";
+      body.id = "sharedView_" + u.id;
+      body.style.display = expandedSharedUid === u.id ? "block" : "none";
+      if (expandedSharedUid === u.id) body.innerHTML = '<div class="log-empty">Loading…</div>';
+      row.appendChild(body);
+
+      container.appendChild(row);
+    });
+  }
+
+  function collapseAllSharedViews() {
+    Object.keys(sharedViewUnsubs).forEach(function (uid) {
+      sharedViewUnsubs[uid].forEach(function (fn) { fn(); });
+      delete sharedViewUnsubs[uid];
+    });
+    expandedSharedUid = null;
+  }
+
+  function toggleSharedView(uid) {
+    if (expandedSharedUid === uid) {
+      collapseAllSharedViews();
+      renderSharedWithMeList();
+      return;
+    }
+    collapseAllSharedViews();
+    expandedSharedUid = uid;
+    renderSharedWithMeList();
+    openSharedView(uid);
+  }
+
+  // Opens a live, read-only view of another employee's today: their
+  // clock status and their to-do list (personal items + tasks their
+  // manager assigned them), exactly as isViewerOf() in firestore.rules
+  // allows. No edit, complete, or delete controls — view only.
+  function openSharedView(uid) {
+    var state = { entry: null, todos: [], assigned: [] };
+
+    function renderSharedBody() {
+      var body = document.getElementById("sharedView_" + uid);
+      if (!body) return;
+      body.innerHTML = "";
+
+      var statusP = document.createElement("p");
+      statusP.className = "status-note";
+      statusP.style.textAlign = "left";
+      statusP.style.margin = "0 0 10px";
+      var entryData = state.entry || emptyDay();
+      var open = currentOpenSession(entryData);
+      if (open) {
+        statusP.textContent = "Clocked in since " + fmtTime(open.clockIn) +
+          " (" + fmtDuration(minutesBetween(open.clockIn, new Date().toISOString())) + " so far)";
+      } else if (entryData.sessions && entryData.sessions.length) {
+        statusP.textContent = "Clocked out — " + fmtDuration(totalMinutesFor(entryData)) + " today";
+      } else {
+        statusP.textContent = "Not clocked in yet today";
+      }
+      body.appendChild(statusP);
+
+      var list = document.createElement("ul");
+      list.className = "log-list";
+      var visibleAssigned = state.assigned.filter(function (t) { return t.status === "assigned" || t.status === "completed"; });
+      if (!state.todos.length && !visibleAssigned.length) {
+        list.innerHTML = '<li class="log-empty">Nothing on their list.</li>';
+        body.appendChild(list);
+        return;
+      }
+      visibleAssigned.forEach(function (task) {
+        var li = document.createElement("li");
+        li.className = "todo-row readonly-todo";
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = task.status === "completed";
+        cb.disabled = true;
+        var text = document.createElement("span");
+        text.className = "todo-text";
+        text.textContent = (task.text || "Assigned task") + " (assigned)";
+        li.appendChild(cb);
+        li.appendChild(text);
+        list.appendChild(li);
+      });
+      state.todos.forEach(function (item) {
+        var li = document.createElement("li");
+        li.className = "todo-row readonly-todo";
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = false;
+        cb.disabled = true;
+        var text = document.createElement("span");
+        text.className = "todo-text";
+        text.textContent = item.text;
+        li.appendChild(cb);
+        li.appendChild(text);
+        list.appendChild(li);
+      });
+      body.appendChild(list);
+    }
+
+    var entryUnsub = db.collection("entries").doc(entryId(uid, todayStr)).onSnapshot(function (snap) {
+      state.entry = snap.exists ? snap.data() : null;
+      renderSharedBody();
+    }, function (err) { console.error("shared entry read error", err); });
+
+    var todosUnsub = db.collection("todos").doc(uid).onSnapshot(function (snap) {
+      state.todos = (snap.exists && Array.isArray(snap.data().items)) ? snap.data().items : [];
+      renderSharedBody();
+    }, function (err) { console.error("shared todos read error", err); });
+
+    var assignedUnsub = db.collection("assignedTasks").where("employeeUid", "==", uid).onSnapshot(function (snap) {
+      state.assigned = snap.docs.map(function (d) { return d.data(); });
+      renderSharedBody();
+    }, function (err) { console.error("shared assigned tasks read error", err); });
+
+    sharedViewUnsubs[uid] = [entryUnsub, todosUnsub, assignedUnsub];
   }
 
   function subscribeMyWeeklyApprovals() {
@@ -1502,20 +1715,29 @@
       mileage: document.getElementById("mileageTab"),
       pastdays: document.getElementById("pastDaysTab"),
       weekly: document.getElementById("weeklyApprovalTab"),
-      approvals: document.getElementById("approvalsTab")
+      approvals: document.getElementById("approvalsTab"),
+      shared: document.getElementById("sharedTab")
     };
     var buttons = {
       log: document.getElementById("tabLogBtn"),
       mileage: document.getElementById("tabMileageBtn"),
       pastdays: document.getElementById("tabPastDaysBtn"),
       weekly: document.getElementById("tabWeeklyBtn"),
-      approvals: document.getElementById("tabApprovalsBtn")
+      approvals: document.getElementById("tabApprovalsBtn"),
+      shared: document.getElementById("tabSharedBtn")
     };
     Object.keys(panels).forEach(function (key) {
       panels[key].style.display = key === tab ? "block" : "none";
       buttons[key].classList.toggle("active", key === tab);
     });
     if (tab === "weekly") renderSelectedWorkWeek();
+    // Stop any open read-only shared views (and their Firestore listeners)
+    // when navigating away from the Shared tab, rather than leaving them
+    // running in the background indefinitely.
+    if (tab !== "shared" && expandedSharedUid !== null) {
+      collapseAllSharedViews();
+      renderSharedWithMeList();
+    }
   }
 
   function wireHandlers() {
@@ -1524,6 +1746,8 @@
     document.getElementById("tabPastDaysBtn").onclick = function () { switchAppTab("pastdays"); };
     document.getElementById("tabWeeklyBtn").onclick = function () { switchAppTab("weekly"); };
     document.getElementById("tabApprovalsBtn").onclick = function () { switchAppTab("approvals"); };
+    document.getElementById("tabSharedBtn").onclick = function () { switchAppTab("shared"); };
+    document.getElementById("saveViewersBtn").onclick = doSaveViewers;
     document.getElementById("previousWeekBtn").onclick = function () {
       selectedApprovalWeekStart = shiftWorkDate(selectedApprovalWeekStart, -7);
       renderSelectedWorkWeek();
@@ -1623,6 +1847,8 @@
     subscribeApproverDirectory();
     subscribeMyWeeklyApprovals();
     subscribeAssignedWeeklyApprovals();
+    subscribeMyProfile();
+    subscribeSharedWithMe();
     document.getElementById("approvalWeekPicker").max = todayStr;
   }
 
@@ -1638,6 +1864,9 @@
     if (unsubApproverUsers) { unsubApproverUsers(); unsubApproverUsers = null; }
     if (unsubMyApprovals) { unsubMyApprovals(); unsubMyApprovals = null; }
     if (unsubAssignedApprovals) { unsubAssignedApprovals(); unsubAssignedApprovals = null; }
+    if (unsubMyProfile) { unsubMyProfile(); unsubMyProfile = null; }
+    if (unsubSharedWithMe) { unsubSharedWithMe(); unsubSharedWithMe = null; }
+    collapseAllSharedViews();
     docCache = {};
     todoItems = [];
     assignedTasks = [];
@@ -1645,6 +1874,8 @@
     approverUsers = [];
     myWeeklyApprovals = {};
     assignedWeeklyApprovals = [];
+    myViewerUids = [];
+    sharedWithMeUsers = [];
     document.getElementById("authScreen").style.display = "block";
     document.getElementById("appScreen").style.display = "none";
   }
