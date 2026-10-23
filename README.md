@@ -156,6 +156,12 @@ shortly after midnight, whether or not anyone has the app open.
 
 ## Recent additions
 
+- **View-only page sharing** — on the new **Shared** tab, an employee
+  picks which coworkers can see their live clock status and to-do list
+  (personal items plus anything their manager assigned them). It's
+  read only: a viewer can't check anything off, edit, or clock the
+  other person in or out — they can just watch. Requires republishing
+  `firestore.rules` after upgrading (see the changelog entry).
 - **Manager-assigned task approvals** — administrators can assign work from
   the Task Approvals tab. The task appears alongside the employee's private
   personal to-do list with the assigning manager's name. After the employee

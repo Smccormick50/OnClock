@@ -76,6 +76,7 @@
     <button class="tab-btn" id="tabPastDaysBtn">Past Days</button>
     <button class="tab-btn" id="tabWeeklyBtn">Work Week Approval</button>
     <button class="tab-btn" id="tabApprovalsBtn" style="display:none;">Approvals <span class="tab-count" id="approvalCount">0</span></button>
+    <button class="tab-btn" id="tabSharedBtn">Shared</button>
   </div>
 
   <div id="logTab">
@@ -234,6 +235,24 @@
       </div>
       <p class="archive-intro">Review each employee’s complete Monday–Sunday work logs before approving or returning the week for correction.</p>
       <div id="assignedApprovalsList"><div class="log-empty">Loading approvals…</div></div>
+    </div>
+  </div>
+
+  <div id="sharedTab" style="display:none;">
+    <div class="panel">
+      <h2>Who can view my page</h2>
+      <p class="status-note" style="text-align:left; margin:0 0 10px;">Pick coworkers who can see your live clock status and to-do list. View only — they can't check anything off or edit anything for you.</p>
+      <ul class="log-list" id="viewerChecklist"><li class="log-empty">Loading…</li></ul>
+      <div class="export-row" style="justify-content:flex-start; align-items:center;">
+        <button class="btn secondary" id="saveViewersBtn">Save</button>
+        <span class="status-note" id="viewersSavedNote" style="display:none; margin:0;">Saved.</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Pages shared with me</h2>
+      <p class="status-note" style="text-align:left; margin:0 0 10px;">Coworkers who've added you as a viewer show up here.</p>
+      <div id="sharedWithMeList"><div class="log-empty">Loading…</div></div>
     </div>
   </div>
 </div>

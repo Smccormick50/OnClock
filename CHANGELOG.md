@@ -11,6 +11,60 @@ backfill, ...) is called out under **After uploading**.
 
 ---
 
+## 2026-10-23 — View-only page sharing
+
+### Added
+- **"Shared" tab on the employee page.** You can now pick specific
+  coworkers who are allowed to see your live clock status and to-do
+  list (personal items and anything your manager assigned you) — view
+  only. A viewer can't check anything off, edit, clock you in or out,
+  or change anything; they can only watch.
+  - **Who can view my page** — a checklist of every coworker with an
+    OnClock login; check the ones you want to share with, then Save.
+  - **Pages shared with me** — anyone who's added you shows up here;
+    tap "View" to open a live, read-only look at their clock status
+    and to-do list, "Hide" to close it.
+- New `firestore.rules` rule: a user can name viewers in
+  `users/{uid}.viewerUids`, and anyone listed there gets read-only
+  access to that user's `entries`, `todos`, and `assignedTasks` —
+  nothing else, and never write access to any of it.
+
+### After uploading
+- **Republish `firestore.rules`** (Firebase Console → Firestore
+  Database → Rules, or `firebase deploy --only firestore:rules`) —
+  without this, the new Shared tab will load but nobody will actually
+  be able to see anyone else's page.
+
+---
+
+## 2026-10-23 — Group-move for to-dos; drag fix confirmed
+
+### Added
+- **Tap-to-select, then drag, to move several to-dos at once.** Tapping
+  a to-do's drag handle (without dragging) selects it — the handle
+  shows a checkmark and the row highlights. Selecting several and then
+  dragging any one of them moves the whole selected group together to
+  the new spot. Dragging an item that isn't selected still moves just
+  that one item, same as before, and clears any existing selection.
+  This is the fix for "only able to drag 1 space at a time" — rather
+  than trying to make a single free-form drag jump further per pointer
+  move, multiple rows can now be grouped and relocated in one motion.
+
+### Fixed
+- Removed two stray duplicate files that had ended up at the repo root
+  (`employee.js`, `backfill-audit.yml`) — leftover copies of
+  `js/employee.js` and `.github/workflows/backfill-audit.yml` from an
+  earlier zip/unzip round. The root copy of `employee.js` was also
+  *stale* (missing the group-move feature above), so it was pure
+  clutter with no effect on the live site, but worth clearing out
+  before it confuses a future diff.
+
+### After uploading
+- None — this is a pure code change, no Firestore rules or manual
+  backfill needed.
+
+---
+
 ## 2026-09-27 — Tests, health checks, and two bugs the tests found
 
 ### Added
