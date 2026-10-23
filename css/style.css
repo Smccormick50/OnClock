@@ -258,6 +258,34 @@ header.top .links a, header.top .links button {
   text-transform: uppercase;
 }
 .assigned-todo { align-items: flex-start; }
+
+/* ---------- view-only page sharing (Shared tab) ---------- */
+.shared-person-row {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.shared-person-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.shared-person-name {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.shared-person-body {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+.todo-row.readonly-todo { opacity: 0.85; }
+.todo-row.readonly-todo input[type="checkbox"] { cursor: default; }
 .todo-assigned-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .todo-assigned-meta { color: var(--ink-soft); font-size: 12px; margin-top: 2px; }
 .assigned-todo.awaiting-approval .todo-text { color: var(--ink-soft); text-decoration: line-through; }
